@@ -8,3 +8,5 @@ build/
 *.spec
 get_refresh_token.py
 
+_bondora.py
+_explore.py
