@@ -6,4 +6,5 @@ __pycache__/
 dist/
 build/
 *.spec
+get_refresh_token.py
 
