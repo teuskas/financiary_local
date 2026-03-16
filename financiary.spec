@@ -13,20 +13,43 @@ L'eseguibile viene creato nella cartella dist/ nella directory del progetto.
 import sys
 import os
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
 # Percorso base del progetto
-project_dir = os.path.dirname(os.path.abspath(SPEC))
+project_dir = Path(os.path.dirname(os.path.abspath(SPEC)))
+
+# Include .env solo se presente
+datas = []
+# Include dati runtime di matplotlib (font, styles, backend config)
+datas += collect_data_files('matplotlib')
+# Include plugin necessari per l'integrazione Tk/Pillow
+datas += collect_data_files('PIL')
+env_path = project_dir / '.env'
+if env_path.exists():
+    datas.append((str(env_path), '.'))
+
+# Include assets (icona e risorse UI)
+assets_path = project_dir / 'assets'
+if assets_path.exists():
+    datas.append((str(assets_path), 'assets'))
+
+# Icone per piattaforma
+icon_ico = project_dir / 'assets' / 'dollar.ico'
+icon_icns = project_dir / 'assets' / 'dollar.icns'
+
+# Hidden imports robusti per matplotlib/tk e runtime grafici
+extra_hiddenimports = []
+extra_hiddenimports += collect_submodules('matplotlib.backends')
+extra_hiddenimports += collect_submodules('matplotlib')
+extra_hiddenimports += collect_submodules('PIL')
 
 a = Analysis(
     ['main.py'],
-    pathex=[project_dir],
+    pathex=[str(project_dir)],
     binaries=[],
-    datas=[
-        # Include il file .env se presente (credenziali Dropbox)
-        ('.env', '.'),
-    ],
+    datas=datas,
     hiddenimports=[
         # Dropbox SDK
         'dropbox',
@@ -42,15 +65,18 @@ a = Analysis(
         'openpyxl.workbook',
         # Matplotlib backend Tkinter
         'matplotlib',
+        'matplotlib.pyplot',
         'matplotlib.backends.backend_tkagg',
+        'matplotlib.backends.backend_agg',
         'matplotlib.backends._backend_tk',
         'matplotlib.figure',
+        # Pillow helper per tkinter
+        'PIL._tkinter_finder',
         # Numpy
         'numpy',
         'numpy.core._multiarray_umath',
         # dotenv
         'dotenv',
-        'python_dotenv',
         # Tkinter (di solito incluso, ma lo esplicitiamo)
         'tkinter',
         'tkinter.ttk',
@@ -63,14 +89,11 @@ a = Analysis(
         'io',
         'datetime',
         'numbers',
-    ],
+    ] + extra_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        'pytest',
-        'unittest',
-    ],
+    excludes=[],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -86,7 +109,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='Financiary',
+    name='OwnFinance',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -102,18 +125,19 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Icona eseguibile (Windows)
+    icon=str(icon_ico) if icon_ico.exists() else None,
 )
 
 # Su macOS crea anche il bundle .app
 if sys.platform == 'darwin':
     app = BUNDLE(
         exe,
-        name='Financiary.app',
-        icon=None,
-        bundle_identifier='com.financiary.app',
+        name='OwnFinance.app',
+        icon=str(icon_icns) if icon_icns.exists() else None,
+        bundle_identifier='com.ownfinance.app',
         info_plist={
             'NSHighResolutionCapable': True,
             'CFBundleShortVersionString': '1.0.0',
         },
     )
-

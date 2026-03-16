@@ -1,14 +1,14 @@
 """
 build.py
-Script per generare l'eseguibile di Financiary tramite PyInstaller.
+Script per generare l'eseguibile di Own Finance tramite PyInstaller.
 
 Uso (dalla cartella del progetto, con il venv attivo):
   python build.py
 
 Genera l'eseguibile nella cartella dist/:
-  Linux  → dist/Financiary
-  Windows→ dist/Financiary.exe
-  macOS  → dist/Financiary.app  (bundle) + dist/Financiary (binario)
+  Linux  → dist/OwnFinance
+  Windows→ dist/OwnFinance.exe
+  macOS  → dist/OwnFinance.app  (bundle) + dist/OwnFinance (binario)
 
 NOTA: PyInstaller genera eseguibili NATIVI per il SO corrente.
       Per avere l'eseguibile su Windows devi eseguire questo script su Windows,
@@ -67,11 +67,11 @@ def build():
 def report():
     """Mostra il percorso dell'eseguibile generato."""
     if sys.platform == "win32":
-        exe = DIST_DIR / "Financiary.exe"
+        exe = DIST_DIR / "OwnFinance.exe"
     elif sys.platform == "darwin":
-        exe = DIST_DIR / "Financiary.app"
+        exe = DIST_DIR / "OwnFinance.app"
     else:
-        exe = DIST_DIR / "Financiary"
+        exe = DIST_DIR / "OwnFinance"
 
     if exe.exists():
         print(f"\n[OK] Eseguibile generato con successo:")
@@ -85,7 +85,7 @@ def report():
 
 if __name__ == "__main__":
     print("=" * 55)
-    print("  Financiary – Build eseguibile standalone")
+    print("  Own Finance – Build eseguibile standalone")
     print("=" * 55)
     check_env()
     clean_previous()
