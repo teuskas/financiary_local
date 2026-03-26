@@ -7,7 +7,7 @@ import os
 import sys
 import threading
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from tkinter import ttk, messagebox
 
 import matplotlib
@@ -129,6 +129,14 @@ class App(tk.Tk):
         self.mm_result_var = tk.StringVar(value="Seleziona i filtri per visualizzare il valore.")
         self.mm_chart_frame: tk.Frame | None = None
         self.mm_mpl_canvas: FigureCanvasTkAgg | None = None
+
+        # Previsionale
+        self.pv_window: tk.Toplevel | None = None
+        self.pv_platform_var = tk.StringVar()
+        self.pv_platform_cb: ttk.Combobox | None = None
+        self.pv_title_var = tk.StringVar(value="")
+        self.pv_result_var = tk.StringVar(value="Seleziona una piattaforma per calcolare il previsionale.")
+        self.pv_hint_var = tk.StringVar(value="")
 
         self.live_bm_value_var = tk.StringVar(value="EUR --")
         self.live_bmr_value_var = tk.StringVar(value="EUR --")
@@ -576,6 +584,23 @@ class App(tk.Tk):
             command=self._go_to_mm_window,
         )
         link_medie_mensili.pack(side="top", anchor="w", padx=10, pady=(0, 8))
+
+        link_previsionale = tk.Button(
+            content,
+            text="Previsionale",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self._go_to_pv_window,
+        )
+        link_previsionale.pack(side="top", anchor="w", padx=10, pady=(0, 8))
 
     def _build_bondora_evolution_tab(self, parent,):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
@@ -1365,6 +1390,241 @@ class App(tk.Tk):
 
 
     # ── Confronto Mensile (GPP_ANNO) ────────────────────────────
+
+    def _go_to_pv_window(self):
+        if self.pv_window is not None and self.pv_window.winfo_exists():
+            self.pv_window.deiconify()
+            self.pv_window.lift()
+            self.pv_window.focus_force()
+            return
+
+        self.pv_window = tk.Toplevel(self)
+        self.pv_window.title("Own Finance - Previsionale")
+        self.pv_window.geometry("760x260")
+        self.pv_window.configure(bg=BG_TABLE)
+        self.pv_window.minsize(720, 240)
+        self.pv_window.protocol("WM_DELETE_WINDOW", self._close_pv_window)
+
+        self._build_pv_window(self.pv_window)
+        self._init_pv_filters()
+        self._refresh_pv_selection()
+
+    def _close_pv_window(self):
+        if self.pv_window is not None and self.pv_window.winfo_exists():
+            self.pv_window.destroy()
+        self.pv_window = None
+        self.pv_platform_cb = None
+
+    def _build_pv_window(self, parent):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text="Previsionale",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Torna indietro",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_pv_window,
+        ).pack(side="right")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(14, 0))
+
+        tk.Label(controls, text="Piattaforma", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.pv_platform_cb = ttk.Combobox(
+            controls,
+            textvariable=self.pv_platform_var,
+            state="readonly",
+            width=16,
+            values=[],
+        )
+        self.pv_platform_cb.pack(side="left", padx=(8, 0))
+        self.pv_platform_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_pv_selection())
+
+        content = tk.Frame(wrapper, bg=BG_TABLE)
+        content.pack(fill="both", expand=True, pady=(16, 0))
+
+        tk.Label(
+            content,
+            textvariable=self.pv_title_var,
+            font=("Segoe UI", 10, "bold"),
+            bg=BG_TABLE,
+            fg=FG_RESIDUO,
+            justify="left",
+        ).pack(anchor="w")
+
+        tk.Label(
+            content,
+            textvariable=self.pv_result_var,
+            font=("Segoe UI", 18, "bold"),
+            bg=BG_TABLE,
+            fg=FG_SOMMA,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+
+        tk.Label(
+            content,
+            textvariable=self.pv_hint_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+
+    def _init_pv_filters(self):
+        values = ["Bondora", "Mintos", "Tutte"]
+        if self.pv_platform_cb is not None:
+            self.pv_platform_cb["values"] = values
+        if not self.pv_platform_var.get():
+            self.pv_platform_var.set("Tutte")
+
+    def _get_bondora_current_snapshot(self) -> tuple[float, float]:
+        """Restituisce (cifra_attuale, daily_rate_attuale) usando i dati Bondora Evolution."""
+        if not self.bondo_evo_data:
+            return 0.0, 0.0
+
+        reached_entries = [
+            (float(daily), row)
+            for daily, row in self.bondo_evo_data.items()
+            if bool(row.get("is_reached", False))
+        ]
+
+        if reached_entries:
+            daily_rate, row = max(
+                reached_entries,
+                key=lambda item: float(item[1].get("cap_pr", 0.0) or 0.0),
+            )
+            cap_pr = float(row.get("cap_pr", 0.0) or 0.0)
+            mtns = float(row.get("mtns", 0.0) or 0.0)
+            current_amount = max(0.0, cap_pr + abs(mtns))
+            return current_amount, daily_rate
+
+        # Fallback: usa il primo target disponibile.
+        first_daily = float(sorted(self.bondo_evo_data.keys())[0])
+        row = self.bondo_evo_data.get(first_daily, {})
+        cap_pr = float(row.get("cap_pr", 0.0) or 0.0)
+        mtns = float(row.get("mtns", 0.0) or 0.0)
+        current_amount = max(0.0, cap_pr - mtns)
+        return current_amount, first_daily
+
+    def _calculate_bondora_forecast(self) -> tuple[float, float, float, str]:
+        """Proietta la cifra Bondora a fine anno usando le soglie/target date di Bondora Evolution."""
+        if not self.bondo_evo_data:
+            return 0.0, 0.0, 0.0, "Dati Bondora Evolution non disponibili."
+
+        today = date.today()
+        end_year = date(today.year, 12, 31)
+
+        current_amount, daily_rate = self._get_bondora_current_snapshot()
+        if current_amount <= 0.0 and daily_rate <= 0.0:
+            return 0.0, 0.0, 0.0, "Dati Bondora non sufficienti per la previsione."
+
+        forecast = current_amount
+
+        events: list[tuple[date, float]] = []
+        for daily, row in self.bondo_evo_data.items():
+            if bool(row.get("is_reached", False)):
+                continue
+            target_date = row.get("target_date")
+            if isinstance(target_date, date) and today < target_date <= end_year:
+                events.append((target_date, float(daily)))
+        events.sort(key=lambda x: (x[0], x[1]))
+
+        event_idx = 0
+        for day_ord in range((today + timedelta(days=1)).toordinal(), end_year.toordinal() + 1):
+            current_day = date.fromordinal(day_ord)
+            while event_idx < len(events) and events[event_idx][0] <= current_day:
+                # La daily può solo aumentare al raggiungimento di uno step successivo.
+                daily_rate = max(daily_rate, events[event_idx][1])
+                event_idx += 1
+            forecast += daily_rate
+
+        projected_gain = max(0.0, forecast - current_amount)
+        hint = (
+            f"Daily iniziale: {self._format_money_it(daily_rate, prefix='EUR/giorno')}\n"
+            f"Guadagno previsionale anno: {self._format_money_it(current_amount)} + "
+            f"{self._format_money_it(projected_gain)} = {self._format_money_it(forecast)}"
+        )
+        return forecast, current_amount, projected_gain, hint
+
+    def _calculate_mintos_forecast(self) -> tuple[float, float, float, str]:
+        """Stima Mintos a fine anno da media mensile attuale (media * 12)."""
+        if not isinstance(self.gpp_data, dict) or not self.gpp_data:
+            return 0.0, 0.0, 0.0, "Dati GPP_ANNO non disponibili."
+
+        current_year = str(datetime.now().year)
+        years = [str(y) for y in self.gpp_data.get("years", [])]
+        if current_year not in years:
+            return 0.0, 0.0, 0.0, f"Anno {current_year} non disponibile in GPP_ANNO."
+
+        month_num = datetime.now().month
+        month_display = f"{month_num}. {MESI[month_num - 1].capitalize()}"
+        # Quota attuale: valore piattaforma in INV+GUAD (mese corrente, fallback ultimo disponibile).
+        current_cumulative = self._get_current_platform_amount("Mintos")
+        # Fallback: se INV+GUAD non è disponibile, usa cumulato guadagni da GPP_ANNO.
+        if current_cumulative <= 0.0:
+            current_cumulative = self._gpp_cumulative_value("Mintos", current_year, month_display)
+        monthly_avg = self._mm_calculate_average("Mintos", current_year, month_display)
+        months_remaining = max(0, 12 - month_num)
+        projected_gain = max(0.0, monthly_avg * months_remaining)
+        forecast = max(0.0, current_cumulative + projected_gain)
+        hint = (
+            f"Quota attuale Mintos (INV+GUAD): {self._format_money_it(current_cumulative)}\n"
+            f"Media mensile attuale Mintos: {self._format_money_it(monthly_avg)}\n"
+            f"Guadagno previsionale anno: {self._format_money_it(current_cumulative)} + "
+            f"{self._format_money_it(projected_gain)} = {self._format_money_it(forecast)}"
+        )
+        return forecast, current_cumulative, projected_gain, hint
+
+    def _refresh_pv_selection(self):
+        platform = self.pv_platform_var.get().strip()
+        if not platform:
+            self.pv_title_var.set("")
+            self.pv_result_var.set("Seleziona una piattaforma")
+            self.pv_hint_var.set("")
+            return
+
+        bondora_forecast, bondora_current, bondora_projected, bondora_hint = self._calculate_bondora_forecast()
+        mintos_forecast, mintos_current, mintos_projected, mintos_hint = self._calculate_mintos_forecast()
+        year = datetime.now().year
+
+        if platform == "Bondora":
+            self.pv_title_var.set(f"Previsionale Bondora a fine {year}")
+            self.pv_result_var.set(self._format_money_it(bondora_forecast))
+            self.pv_hint_var.set(bondora_hint)
+        elif platform == "Mintos":
+            self.pv_title_var.set(f"Previsionale Mintos a fine {year}")
+            self.pv_result_var.set(self._format_money_it(mintos_forecast))
+            self.pv_hint_var.set(
+                f"Totale atteso fine anno Mintos: {self._format_money_it(mintos_forecast)}\n"
+                f"{mintos_hint}"
+            )
+        else:
+            total = bondora_forecast + mintos_forecast
+            total_current = bondora_current + mintos_current
+            total_projected = bondora_projected + mintos_projected
+            self.pv_title_var.set(f"Previsionale Totale (Bondora + Mintos) a fine {year}")
+            self.pv_result_var.set(self._format_money_it(total))
+            self.pv_hint_var.set(
+                f"Bondora: {self._format_money_it(bondora_forecast)} | Mintos: {self._format_money_it(mintos_forecast)}\n"
+                f"Guadagno previsionale anno: {self._format_money_it(total_current)} + "
+                f"{self._format_money_it(total_projected)} = {self._format_money_it(total)}"
+            )
 
     def _go_to_mm_window(self):
         if self.mm_window is not None and self.mm_window.winfo_exists():
