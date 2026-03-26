@@ -3,6 +3,8 @@ app_ui.py
 App desktop con 3 tab per visualizzare le tabelle del foglio 2026.
 """
 
+import os
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -50,13 +52,22 @@ TAB_LABELS = {
     "grafici":      "📉  Grafici",
     "statistiche_progressive": "🧮  Statistiche progressive",
     "bondora_evolution": "🧬  Bondora Evolution",
+    "investimenti_attuali_vivi": "💵  Investimenti attuali vivi",
 }
+
+
+def _resource_path(relative_path: str) -> str:
+    """Restituisce il path risolto sia in dev che dentro bundle PyInstaller."""
+    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 
 class App(tk.Tk):
     def __init__(self):
-        super().__init__()
-        self.title("Financiary – 2026")
+        super().__init__(className="OwnFinance")
+        self._icon_image = None
+        self._set_window_icon()
+        self.title("Own Finance – 2026")
         self.geometry("1100x480")
         self.configure(bg=BG)
         self.resizable(True, True)
@@ -106,6 +117,25 @@ class App(tk.Tk):
         self.gpp_chart_frame: tk.Frame | None = None
         self.gpp_mpl_canvas: FigureCanvasTkAgg | None = None
 
+        # Medie mensili
+        self.mm_window: tk.Toplevel | None = None
+        self.mm_month_var = tk.StringVar()
+        self.mm_platform_var = tk.StringVar()
+        self.mm_year_var = tk.StringVar()
+        self.mm_month_cb: ttk.Combobox | None = None
+        self.mm_platform_cb: ttk.Combobox | None = None
+        self.mm_year_cb: ttk.Combobox | None = None
+        self.mm_title_var = tk.StringVar(value="")
+        self.mm_result_var = tk.StringVar(value="Seleziona i filtri per visualizzare il valore.")
+        self.mm_chart_frame: tk.Frame | None = None
+        self.mm_mpl_canvas: FigureCanvasTkAgg | None = None
+
+        self.live_bm_value_var = tk.StringVar(value="EUR --")
+        self.live_bmr_value_var = tk.StringVar(value="EUR --")
+        self.live_bondora_value_var = tk.StringVar(value="EUR --")
+        self.live_mintos_value_var = tk.StringVar(value="EUR --")
+        self.live_relender_value_var = tk.StringVar(value="EUR --")
+
         self._build_header()
         self._build_notebook()
         self._build_statusbar()
@@ -118,7 +148,7 @@ class App(tk.Tk):
     def _build_header(self):
         hdr = tk.Frame(self, bg=BG, pady=10)
         hdr.pack(fill="x", padx=20)
-        self.lbl_header = tk.Label(hdr, text=f"Financiary  —  Riepilogo {self.current_year_sheet}",
+        self.lbl_header = tk.Label(hdr, text=f"Own Finance  —  Riepilogo {self.current_year_sheet}",
                  font=FONT_TITLE, bg=BG, fg=FG_HEADER)
         self.lbl_header.pack(side="left")
         self.lbl_update = tk.Label(hdr, text="Caricamento dati…",
@@ -157,6 +187,8 @@ class App(tk.Tk):
                 self._build_progressive_tab(frame)
             elif key == "bondora_evolution":
                 self._build_bondora_evolution_tab(frame)
+            elif key == "investimenti_attuali_vivi":
+                self._build_live_investments_tab(frame)
             else:
                 self.table_views[key] = self._build_data_table(frame)
 
@@ -196,9 +228,44 @@ class App(tk.Tk):
     def _is_zero_value(self, value) -> bool:
         return self._is_numeric_value(value) and abs(float(value)) < 1e-9
 
+    def _format_number_it(self, value: float, decimals: int = 2) -> str:
+        us_text = f"{float(value):,.{decimals}f}"
+        return us_text.replace(",", "#").replace(".", ",").replace("#", ".")
+
+    def _format_number_it_compact(self, value: float, max_decimals: int = 6) -> str:
+        us_text = f"{float(value):,.{max_decimals}f}".rstrip("0").rstrip(".")
+        return us_text.replace(",", "#").replace(".", ",").replace("#", ".")
+
+    def _format_money_it(self, value: float, prefix: str = "EUR") -> str:
+        return f"{prefix} {self._format_number_it(value, 2)}"
+
+    def _format_signed_number_it(self, value: float, decimals: int = 2) -> str:
+        sign = "+" if value >= 0 else ""
+        return f"{sign}{self._format_number_it(value, decimals)}"
+
+    def _parse_localized_number(self, raw: str) -> float | None:
+        text = str(raw).strip().replace("€", "").replace("EUR", "").replace(" ", "")
+        if not text:
+            return None
+        try:
+            if "," in text and "." in text:
+                # Se la virgola è più a destra, probabile formato IT (1.234,56)
+                if text.rfind(",") > text.rfind("."):
+                    normalized = text.replace(".", "").replace(",", ".")
+                else:
+                    # Formato US (1,234.56)
+                    normalized = text.replace(",", "")
+            elif "," in text:
+                normalized = text.replace(".", "").replace(",", ".")
+            else:
+                normalized = text.replace(",", "")
+            return float(normalized)
+        except ValueError:
+            return None
+
     def _format_table_value(self, column: str, value) -> str:
         if column != "Piattaforma" and self._is_numeric_value(value):
-            return f"€ {float(value):,.2f}"
+            return self._format_money_it(float(value), prefix="€")
         return str(value)
 
     def _get_table_cell_color(self, column: str, value, *, is_total_row: bool, is_zero_row: bool) -> str:
@@ -317,6 +384,133 @@ class App(tk.Tk):
         tk.Label(right, textvariable=self.graph_info_var, font=FONT_TABLE, bg=BG_TABLE, fg=FG, justify="left").pack(anchor="w", pady=(8, 0))
         tk.Label(right, textvariable=self.graph_empty_var, font=FONT_SMALL, bg=BG_TABLE, fg=FG_ACCENT, justify="left").pack(anchor="w", pady=(8, 0))
 
+    def _build_live_investments_tab(self, parent: tk.Frame):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(
+            wrapper,
+            text="Investimenti attuali vivi",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(anchor="w")
+
+        content = tk.Frame(wrapper, bg=BG_TABLE)
+        content.pack(fill="both", expand=True, pady=(14, 0))
+
+        # Layout a 2 colonne fisso: cumulativi a sinistra, dettaglio a destra.
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_columnconfigure(1, weight=0, minsize=300)
+        content.grid_rowconfigure(0, weight=1)
+
+        left_col = tk.Frame(content, bg=BG_TABLE)
+        left_col.grid(row=0, column=0, sticky="nsew")
+
+        right_col = tk.Frame(content, bg=BG_TABLE)
+        right_col.grid(row=0, column=1, sticky="ne", padx=(12, 0))
+
+        card1 = tk.Frame(left_col, bg=BG_FRAME, padx=16, pady=12)
+        card1.pack(anchor="w", fill="x", pady=(0, 8))
+        tk.Label(card1, text="Bondora + Mintos", font=FONT_TAB, bg=BG_FRAME, fg=FG).pack(anchor="w")
+        tk.Label(card1, textvariable=self.live_bm_value_var, font=("Segoe UI", 16, "bold"), bg=BG_FRAME, fg=FG_SOMMA).pack(anchor="w", pady=(6, 0))
+
+        card2 = tk.Frame(left_col, bg=BG_FRAME, padx=16, pady=12)
+        card2.pack(anchor="w", fill="x")
+        tk.Label(card2, text="Bondora + Mintos + ReLender", font=FONT_TAB, bg=BG_FRAME, fg=FG).pack(anchor="w")
+        tk.Label(card2, textvariable=self.live_bmr_value_var, font=("Segoe UI", 16, "bold"), bg=BG_FRAME, fg=FG_SOMMA).pack(anchor="w", pady=(6, 0))
+
+        detail = tk.Frame(right_col, bg=BG_FRAME, padx=16, pady=12)
+        detail.pack(anchor="n", fill="x")
+        tk.Label(detail, text="Dettaglio piattaforme", font=FONT_TAB, bg=BG_FRAME, fg=FG_HEADER).pack(anchor="w", pady=(0, 8))
+
+        row1 = tk.Frame(detail, bg=BG_FRAME)
+        row1.pack(fill="x")
+        tk.Label(row1, text="Bondora", font=FONT_TABLE, bg=BG_FRAME, fg=FG).pack(side="left")
+        tk.Label(row1, textvariable=self.live_bondora_value_var, font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        row2 = tk.Frame(detail, bg=BG_FRAME)
+        row2.pack(fill="x", pady=(4, 0))
+        tk.Label(row2, text="Mintos", font=FONT_TABLE, bg=BG_FRAME, fg=FG).pack(side="left")
+        tk.Label(row2, textvariable=self.live_mintos_value_var, font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        row3 = tk.Frame(detail, bg=BG_FRAME)
+        row3.pack(fill="x", pady=(4, 0))
+        tk.Label(row3, text="ReLender", font=FONT_TABLE, bg=BG_FRAME, fg=FG).pack(side="left")
+        tk.Label(row3, textvariable=self.live_relender_value_var, font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+    def _normalize_platform_name(self, name: str) -> str:
+        # Uniforma le varianti tipo "ReLender", "Re-Lender", "Re Lender".
+        return (
+            str(name)
+            .strip()
+            .lower()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+        )
+
+    def _safe_float(self, value):
+        if not self._is_numeric_value(value):
+            return None
+        number = float(value)
+        # NaN check senza dipendenze extra
+        if number != number:
+            return None
+        return number
+
+    def _get_current_platform_amount(self, platform_name: str, aliases: list[str] | None = None) -> float:
+        inv_guad_df = self.tables.get("inv_guad")
+        if inv_guad_df is None or inv_guad_df.empty or "Piattaforma" not in inv_guad_df.columns:
+            return 0.0
+
+        names = [platform_name] + (aliases or [])
+        targets = {self._normalize_platform_name(name) for name in names}
+        month_cols = [m for m in MESI if m in inv_guad_df.columns]
+        if not month_cols:
+            return 0.0
+
+        platform_row = None
+        for _, row in inv_guad_df.iterrows():
+            row_name = self._normalize_platform_name(row.get("Piattaforma", ""))
+            if row_name in targets:
+                platform_row = row
+                break
+
+        if platform_row is None:
+            return 0.0
+
+        # Preferisce il mese corrente, altrimenti usa l'ultimo mese disponibile.
+        current_month = MESI[datetime.now().month - 1]
+        if current_month in month_cols:
+            current_value = self._safe_float(platform_row.get(current_month))
+            if current_value is not None:
+                return current_value
+
+        for month in reversed(month_cols):
+            fallback_value = self._safe_float(platform_row.get(month))
+            if fallback_value is not None:
+                return fallback_value
+
+        return 0.0
+
+    def _refresh_live_investments_tab(self):
+        bondora = self._get_current_platform_amount("Bondora")
+        mintos = self._get_current_platform_amount("Mintos")
+        relender = self._get_current_platform_amount(
+            "ReLender",
+            aliases=["Re Lender", "Re-Lender", "Relender"],
+        )
+
+        bm_total = bondora + mintos
+        bmr_total = bm_total + relender
+
+        self.live_bondora_value_var.set(self._format_money_it(bondora))
+        self.live_mintos_value_var.set(self._format_money_it(mintos))
+        self.live_relender_value_var.set(self._format_money_it(relender))
+        self.live_bm_value_var.set(self._format_money_it(bm_total))
+        self.live_bmr_value_var.set(self._format_money_it(bmr_total))
+
     def _build_progressive_tab(self, parent: tk.Frame):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
         wrapper.pack(fill="both", expand=True, padx=16, pady=16)
@@ -366,7 +560,24 @@ class App(tk.Tk):
         )
         link_mensile.pack(side="top", anchor="w", padx=10, pady=(0, 8))
 
-    def _build_bondora_evolution_tab(self, parent: tk.Frame):
+        link_medie_mensili = tk.Button(
+            content,
+            text="Medie mensili",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self._go_to_mm_window,
+        )
+        link_medie_mensili.pack(side="top", anchor="w", padx=10, pady=(0, 8))
+
+    def _build_bondora_evolution_tab(self, parent,):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
         wrapper.pack(fill="both", expand=True, padx=16, pady=16)
 
@@ -515,6 +726,17 @@ class App(tk.Tk):
         self.gt_chart_frame = tk.Frame(wrapper, bg=BG_TABLE)
         self.gt_chart_frame.pack(fill="both", expand=True, pady=(10, 0))
 
+    def _set_window_icon(self):
+        """Imposta l'icona finestra con il simbolo $ se disponibile."""
+        try:
+            icon_path = _resource_path(os.path.join("assets", "dollar.png"))
+            if os.path.exists(icon_path):
+                self._icon_image = tk.PhotoImage(file=icon_path)
+                self.iconphoto(True, self._icon_image)
+        except Exception:
+            # Fallback silenzioso: usa icona di default del sistema
+            pass
+
     def _load_data(self):
         try:
             self._set_status("Connessione a Dropbox...")
@@ -544,8 +766,8 @@ class App(tk.Tk):
         self.current_year_sheet = sheet_anno
 
         # Aggiorna titolo finestra e header con l'anno rilevato
-        self.title(f"Financiary – {sheet_anno}")
-        self.lbl_header.config(text=f"Financiary  —  Riepilogo {sheet_anno}")
+        self.title(f"Own Finance – {sheet_anno}")
+        self.lbl_header.config(text=f"Own Finance  —  Riepilogo {sheet_anno}")
 
         for key, df in tables.items():
             self._populate_data_table(self.table_views[key], df)
@@ -555,6 +777,7 @@ class App(tk.Tk):
         self._refresh_gt_anno_selection()
         self._init_bondo_evo_filters()
         self._refresh_bondo_evo_display()
+        self._refresh_live_investments_tab()
         ts = datetime.now().strftime("%d/%m/%Y %H:%M")
         self.lbl_update.config(text=f"Aggiornato: {ts}")
 
@@ -626,15 +849,15 @@ class App(tk.Tk):
         details = (
             f"Piattaforma: {platform}\n"
             f"Mese: {month}\n"
-            f"Completato (inv_guad): EUR {current_val:,.2f}\n"
-            f"Obiettivo: EUR {goal:,.2f}\n"
+            f"Completato (inv_guad): {self._format_money_it(current_val)}\n"
+            f"Obiettivo: {self._format_money_it(goal)}\n"
             f"Copertura: {completed_ratio * 100:.1f}%"
         )
         self.graph_info_var.set(details)
         if extra_val > 0:
-            self.graph_empty_var.set(f"Sforamento obiettivo: EUR {extra_val:,.2f}")
+            self.graph_empty_var.set(f"Sforamento obiettivo: {self._format_money_it(extra_val)}")
         else:
-            self.graph_empty_var.set(f"Residuo: EUR {remaining_val:,.2f}")
+            self.graph_empty_var.set(f"Residuo: {self._format_money_it(remaining_val)}")
 
     def _draw_pie_chart(self, completed_ratio: float):
         if self.graph_canvas is None:
@@ -665,7 +888,6 @@ class App(tk.Tk):
         c.create_rectangle(cw - 130, legend_y - 7, cw - 116, legend_y + 7, fill=FG_RESIDUO, outline="")
         c.create_text(cw - 60, legend_y, text="Residuo", fill=FG, font=FONT_SMALL)
 
-    # ...existing code...
 
     def _set_status(self, msg: str):
         self.after(0, lambda: self.lbl_status.config(text=msg))
@@ -678,10 +900,10 @@ class App(tk.Tk):
             return
 
         self.gt_window = tk.Toplevel(self)
-        self.gt_window.title("Financiary - GT_ANNO")
+        self.gt_window.title("Own Finance - GT_ANNO")
         self.gt_window.geometry("900x420")
         self.gt_window.configure(bg=BG_TABLE)
-        self.gt_window.minsize(760, 360)
+        self.gt_window.minsize(800, 480)
         self.gt_window.protocol("WM_DELETE_WINDOW", self._close_gt_anno_window)
 
         self._build_gt_anno_tab(self.gt_window)
@@ -783,7 +1005,7 @@ class App(tk.Tk):
             # Etichetta sul top della barra
             for bar_rect, val in zip(bars, values):
                 if val > 0:
-                    label_text = f"{val:,.6f}".rstrip("0").rstrip(".")
+                    label_text = self._format_number_it_compact(val, max_decimals=6)
                     ax.text(
                         bar_rect.get_x() + bar_rect.get_width() / 2,
                         bar_rect.get_height() + max(values) * 0.01,
@@ -854,11 +1076,11 @@ class App(tk.Tk):
 
             # delta = anno selezionato - anno di confronto
             delta = ref_value - other_value
-            delta_str = f"{'+' if delta >= 0 else ''}{delta:,.2f}"
+            delta_str = self._format_signed_number_it(delta)
             tag = "positive" if delta > 0 else ("negative" if delta < 0 else "neutral")
             tree.insert("", "end", values=(
                 str(other_year),
-                f"{other_value:,.2f}",
+                self._format_number_it(other_value, 2),
                 delta_str,
             ), tags=(tag,))
 
@@ -968,7 +1190,7 @@ class App(tk.Tk):
         else:
             ref_value = float(agg_row.iloc[0][year])
 
-        self.gt_result_var.set(f"EUR {ref_value:,.2f}")
+        self.gt_result_var.set(self._format_money_it(ref_value))
         self.gt_hint_var.set(f"{metric_label} - {platform} - anno {year}")
 
         # Popola la tabella di confronto con tutti gli altri anni
@@ -982,7 +1204,7 @@ class App(tk.Tk):
             return
 
         sorted_values = list(self.bondo_evo_data.keys())
-        sorted_display = [f"€ {val:,.2f}" for val in sorted_values]
+        sorted_display = [self._format_money_it(val, prefix="€") for val in sorted_values]
 
         if self.bondo_evo_daily_cb is not None:
             self.bondo_evo_daily_cb["values"] = sorted_display
@@ -1047,7 +1269,10 @@ class App(tk.Tk):
             return
 
         try:
-            daily_value = float(selected_str.replace("€", "").replace(",", "").strip())
+            parsed_daily = self._parse_localized_number(selected_str)
+            if parsed_daily is None:
+                return
+            daily_value = float(parsed_daily)
         except ValueError:
             return
 
@@ -1082,7 +1307,7 @@ class App(tk.Tk):
 
         tk.Label(
             self.bondo_evo_info_frame,
-            text=f"Cifra obiettivo: EUR {cap_pr:,.2f}\nGiorni effettivi obiettivo: {dtns:.0f} giorni",
+            text=f"Cifra obiettivo: {self._format_money_it(cap_pr)}\nGiorni effettivi obiettivo: {dtns:.0f} giorni",
             font=FONT_TABLE,
             bg=BG_TABLE,
             fg=FG,
@@ -1091,10 +1316,10 @@ class App(tk.Tk):
 
         if mtns < 0:
             mtns_color = FG_SOMMA
-            mtns_text = f"Cifra mancante/esubero: EUR +{abs(mtns):,.2f}"
+            mtns_text = f"Cifra mancante/esubero: {self._format_money_it(abs(mtns), prefix='EUR +')}"
         elif mtns > 0:
             mtns_color = FG_NEGATIVE
-            mtns_text = f"Cifra mancante/esubero: EUR -{mtns:,.2f}"
+            mtns_text = f"Cifra mancante/esubero: {self._format_money_it(mtns, prefix='EUR -')}"
         else:
             mtns_color = FG
             mtns_text = "Cifra mancante/esubero: EUR 0.00"
@@ -1141,6 +1366,338 @@ class App(tk.Tk):
 
     # ── Confronto Mensile (GPP_ANNO) ────────────────────────────
 
+    def _go_to_mm_window(self):
+        if self.mm_window is not None and self.mm_window.winfo_exists():
+            self.mm_window.deiconify()
+            self.mm_window.lift()
+            self.mm_window.focus_force()
+            return
+
+        self.mm_window = tk.Toplevel(self)
+        self.mm_window.title("Own Finance - Medie mensili")
+        self.mm_window.geometry("760x220")
+        self.mm_window.configure(bg=BG_TABLE)
+        self.mm_window.minsize(720, 220)
+        self.mm_window.protocol("WM_DELETE_WINDOW", self._close_mm_window)
+
+        self._build_mm_window(self.mm_window)
+        self._init_mm_filters()
+        self._refresh_mm_selection()
+
+    def _close_mm_window(self):
+        if self.mm_window is not None and self.mm_window.winfo_exists():
+            self.mm_window.destroy()
+        self.mm_window = None
+        self.mm_month_cb = None
+        self.mm_platform_cb = None
+        self.mm_year_cb = None
+
+    def _build_mm_window(self, parent):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text="Medie mensili",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Torna indietro",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_mm_window,
+        ).pack(side="right")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(14, 0))
+
+        tk.Label(controls, text="Mese", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.mm_month_cb = ttk.Combobox(
+            controls,
+            textvariable=self.mm_month_var,
+            state="readonly",
+            width=16,
+            values=[],
+        )
+        self.mm_month_cb.pack(side="left", padx=(8, 18))
+        self.mm_month_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_mm_selection())
+
+        tk.Label(controls, text="Piattaforma", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.mm_platform_cb = ttk.Combobox(
+            controls,
+            textvariable=self.mm_platform_var,
+            state="readonly",
+            width=14,
+            values=[],
+        )
+        self.mm_platform_cb.pack(side="left", padx=(8, 18))
+        self.mm_platform_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_mm_selection())
+
+        tk.Label(controls, text="Anno", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.mm_year_cb = ttk.Combobox(
+            controls,
+            textvariable=self.mm_year_var,
+            state="readonly",
+            width=12,
+            values=[],
+        )
+        self.mm_year_cb.pack(side="left", padx=(8, 0))
+        self.mm_year_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_mm_selection())
+
+        # Area risultati: valore risultato + eventuale istogramma
+        results_wrapper = tk.Frame(wrapper, bg=BG_TABLE)
+        results_wrapper.pack(fill="both", expand=True, pady=(14, 0))
+
+        tk.Label(
+            results_wrapper,
+            textvariable=self.mm_title_var,
+            font=("Segoe UI", 10, "bold"),
+            bg=BG_TABLE,
+            fg=FG_RESIDUO,
+            justify="left",
+        ).pack(anchor="w")
+
+        tk.Label(
+            results_wrapper,
+            textvariable=self.mm_result_var,
+            font=("Segoe UI", 16, "bold"),
+            bg=BG_TABLE,
+            fg=FG_SOMMA,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+
+        self.mm_chart_frame = tk.Frame(results_wrapper, bg=BG_TABLE)
+        self.mm_chart_frame.pack(fill="both", expand=True, pady=(10, 0))
+
+    def _init_mm_filters(self):
+        mesi_display = [f"{i + 1}. {m.capitalize()}" for i, m in enumerate(MESI)] + ["Totale"]
+        platforms = ["Bondora", "Mintos", "Tutte"]
+
+        years: list[str] = []
+        if isinstance(self.gpp_data, dict) and self.gpp_data:
+            raw_years = self.gpp_data.get("years", [])
+            years = [str(y) for y in raw_years]
+        if not years and isinstance(self.gt_data, dict) and self.gt_data:
+            raw_years = self.gt_data.get("years", [])
+            years = [str(y) for y in raw_years]
+
+        year_options = list(years) + ["Anno Per Anno"]
+
+        if self.mm_month_cb is not None:
+            self.mm_month_cb["values"] = mesi_display
+        if self.mm_platform_cb is not None:
+            self.mm_platform_cb["values"] = platforms
+        if self.mm_year_cb is not None:
+            self.mm_year_cb["values"] = year_options
+
+        if not self.mm_month_var.get() and mesi_display:
+            current_month_idx = datetime.now().month - 1
+            self.mm_month_var.set(mesi_display[current_month_idx])
+        if not self.mm_platform_var.get():
+            self.mm_platform_var.set("Tutte")
+        if not self.mm_year_var.get() and years:
+            self.mm_year_var.set(years[-1])
+
+    def _mm_extract_month_number(self, month_display: str) -> int | None:
+        """Estrae il numero del mese da una stringa come '1. Gennaio' oppure restituisce None per 'Totale'."""
+        if month_display == "Totale":
+            return None
+        try:
+            return int(month_display.split(".")[0])
+        except (ValueError, IndexError):
+            return None
+
+    def _mm_extract_month_name(self, month_display: str) -> str:
+        """Estrae il nome del mese dalla stringa display."""
+        if month_display == "Totale":
+            return "Totale"
+        try:
+            return month_display.split(". ")[1].lower()
+        except IndexError:
+            return month_display.lower()
+
+    def _mm_calculate_average(self, platform_display: str, year: str, month_display: str) -> float:
+        """
+        Calcola la media mensile per una piattaforma, anno e mese specifici.
+        Media = (guadagno cumulativo da gennaio a mese X) / numero del mese
+        Per "Tutte": somma delle medie di tutte le piattaforme
+        """
+        month_num = self._mm_extract_month_number(month_display)
+        month_name = self._mm_extract_month_name(month_display)
+
+        data = self.gpp_data.get("data", {})
+        if not data:
+            return 0.0
+
+        platforms_to_sum = []
+        if platform_display == "Tutte":
+            platforms_to_sum = self.gpp_data.get("platforms", [])
+        else:
+            # Mappo il nome visualizzato al nome interno
+            for plat in self.gpp_data.get("platforms", []):
+                if plat.capitalize() == platform_display:
+                    platforms_to_sum.append(plat)
+                    break
+
+        if not platforms_to_sum:
+            return 0.0
+
+        # Calcola il cumulativo da gennaio fino al mese selezionato
+        total_cumulative = 0.0
+        for plat in platforms_to_sum:
+            plat_data = data.get(plat, {})
+            year_data = plat_data.get(year, {})
+            
+            if month_num is None:
+                # "Totale": somma tutti i mesi
+                for m in MESI:
+                    total_cumulative += year_data.get(m, 0.0)
+            else:
+                # Somma da gennaio fino al mese selezionato
+                for i in range(month_num):
+                    m = MESI[i]
+                    total_cumulative += year_data.get(m, 0.0)
+
+        # Calcola la media
+        if month_num is None or month_num == 0:
+            # "Totale": media annuale = totale / 12
+            average = total_cumulative / 12.0 if total_cumulative > 0 else 0.0
+        else:
+            average = total_cumulative / month_num
+
+        return average
+
+    def _clear_mm_chart(self):
+        """Rimuove l'istogramma matplotlib se presente."""
+        if self.mm_mpl_canvas is not None:
+            try:
+                self.mm_mpl_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self.mm_mpl_canvas = None
+        if self.mm_chart_frame is not None:
+            for widget in self.mm_chart_frame.winfo_children():
+                widget.destroy()
+
+    def _draw_mm_bar_chart(self, years: list, values: list, platform: str, month: str):
+        """Disegna l'istogramma delle medie mensili anno per anno."""
+        if self.mm_chart_frame is None:
+            return
+        self._clear_mm_chart()
+
+        import numpy as np
+
+        bg_color = BG_TABLE
+        fg_color = FG
+        header_color = FG_HEADER
+
+        fig, ax = plt.subplots(figsize=(5.5, 3.8))
+        fig.patch.set_facecolor(bg_color)
+        ax.set_facecolor(bg_color)
+
+        x = np.arange(len(years))
+        colors = [FG_HEADER if y == str(datetime.now().year) else "#6c7086" for y in years]
+        bars = ax.bar(x, values, color=colors, alpha=0.88, width=0.55)
+
+        for bar_rect, val in zip(bars, values):
+            if val > 0:
+                ax.text(
+                    bar_rect.get_x() + bar_rect.get_width() / 2,
+                    bar_rect.get_height() + max(values) * 0.01 if max(values) > 0 else 0.01,
+                    self._format_number_it(val, 2),
+                    ha="center", va="bottom",
+                    fontsize=7, color=fg_color,
+                )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([str(y) for y in years], color=fg_color, fontsize=9)
+        ax.tick_params(axis="y", colors=fg_color, labelsize=8)
+        ax.spines["bottom"].set_color(fg_color)
+        ax.spines["left"].set_color(fg_color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.yaxis.label.set_color(fg_color)
+        ax.set_ylabel("Media EUR", color=fg_color, fontsize=9)
+        
+        month_name = self._mm_extract_month_name(month)
+        title = f"Media mensile – {platform} – fino a {month_name.capitalize()}"
+        ax.set_title(title, color=header_color, fontsize=10, pad=8)
+        ax.grid(axis="y", color="#585b70", linestyle="--", linewidth=0.5, alpha=0.6)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.mm_chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.mm_mpl_canvas = canvas
+
+    def _refresh_mm_selection(self):
+        """Aggiorna la visualizzazione quando cambiano i filtri."""
+        if self.mm_result_var is None:
+            return
+        if not isinstance(self.gpp_data, dict) or not self.gpp_data:
+            self.mm_title_var.set("")
+            self.mm_result_var.set("Dati GPP_ANNO non disponibili")
+            self._clear_mm_chart()
+            return
+
+        month = self.mm_month_var.get().strip()
+        platform = self.mm_platform_var.get().strip()
+        year = self.mm_year_var.get().strip()
+
+        if not month or not platform or not year:
+            self.mm_title_var.set("")
+            self.mm_result_var.set("Seleziona mese, piattaforma e anno")
+            self._clear_mm_chart()
+            return
+
+        years_available = self.gpp_data.get("years", [])
+        years_available_str = [str(y) for y in years_available]
+
+        if year == "Anno Per Anno":
+            # Disegna istogramma con medie per ogni anno
+            bar_years = []
+            bar_values = []
+            
+            for y in sorted(years_available_str, key=int):
+                avg = self._mm_calculate_average(platform, y, month)
+                bar_years.append(y)
+                bar_values.append(avg)
+
+            if bar_years:
+                self._draw_mm_bar_chart(bar_years, bar_values, platform, month)
+                month_name = self._mm_extract_month_name(month)
+                self.mm_title_var.set("")
+                self.mm_result_var.set(f"Medie mensili – {platform} – fino a {month_name.capitalize()}")
+            else:
+                self.mm_title_var.set("")
+                self.mm_result_var.set("Nessun dato disponibile per le selezioni")
+                self._clear_mm_chart()
+        else:
+            # Anno specifico: mostra titolo (rosso) + valore (verde)
+            if year not in years_available_str:
+                self.mm_title_var.set("")
+                self.mm_result_var.set("Anno non disponibile")
+                self._clear_mm_chart()
+                return
+
+            avg = self._mm_calculate_average(platform, year, month)
+            month_name = self._mm_extract_month_name(month)
+            title = f"Media guadagni su {platform} a {month_name} {year}"
+            self.mm_title_var.set(title)
+            self.mm_result_var.set(self._format_money_it(avg))
+            self._clear_mm_chart()
+
     def _go_to_gpp_window(self):
         if self.gpp_window is not None and self.gpp_window.winfo_exists():
             self.gpp_window.deiconify()
@@ -1149,10 +1706,10 @@ class App(tk.Tk):
             return
 
         self.gpp_window = tk.Toplevel(self)
-        self.gpp_window.title("Financiary - Confronto Mensile")
+        self.gpp_window.title("Own Finance - Confronto Mensile")
         self.gpp_window.geometry("960x560")
         self.gpp_window.configure(bg=BG_TABLE)
-        self.gpp_window.minsize(800, 480)
+        self.gpp_window.minsize=800, 480
         self.gpp_window.protocol("WM_DELETE_WINDOW", self._close_gpp_window)
 
         self._build_gpp_window(self.gpp_window)
@@ -1357,7 +1914,7 @@ class App(tk.Tk):
                 tag = "current"
             elif current_val is not None:
                 delta = current_val - val
-                delta_str = f"{'+' if delta >= 0 else ''}{delta:,.2f}"
+                delta_str = self._format_signed_number_it(delta)
                 tag = "positive" if delta > 0 else ("negative" if delta < 0 else "neutral")
             else:
                 delta_str = "N/D"
@@ -1365,7 +1922,7 @@ class App(tk.Tk):
 
             tree.insert("", "end", values=(
                 str(year),
-                f"€ {val:,.2f}",
+                self._format_money_it(val, prefix="€"),
                 delta_str,
             ), tags=(tag,))
 
@@ -1407,7 +1964,7 @@ class App(tk.Tk):
                 ax.text(
                     bar_rect.get_x() + bar_rect.get_width() / 2,
                     bar_rect.get_height() + max(values) * 0.01 if max(values) > 0 else 0.01,
-                    f"{val:,.2f}",
+                    self._format_number_it(val, 2),
                     ha="center", va="bottom",
                     fontsize=7, color=fg_color,
                 )
@@ -1419,8 +1976,11 @@ class App(tk.Tk):
         ax.spines["left"].set_color(fg_color)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        ax.yaxis.label.set_color(fg_color)
         ax.set_ylabel("EUR", color=fg_color, fontsize=9)
-        label_mese = month if month == "Totale" else f"cumulato a {month.capitalize()}"
+        mesi_map = getattr(self, "_gpp_mesi_display_map", {})
+        month_key = mesi_map.get(month, month)
+        label_mese = month_key if month_key == "Totale" else f"Cumulato a {month_key.capitalize()}"
         title = f"{platform} – {label_mese}"
         ax.set_title(title, color=header_color, fontsize=10, pad=8)
         ax.grid(axis="y", color="#585b70", linestyle="--", linewidth=0.5, alpha=0.6)

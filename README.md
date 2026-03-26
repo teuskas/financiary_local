@@ -39,3 +39,13 @@ python main.py
 - `pandas` — lettura e manipolazione dati
 - `python-dotenv` — gestione variabili d'ambiente
 - `pyinstaller` — compilazione standalone
+
+## Versione Android (APK)
+
+E stata aggiunta una base mobile separata in `mobile/`.
+
+- Entry point mobile: `mobile/own_finance_mobile/main.py`
+- Build Android: `mobile/buildozer.spec`
+- Guida rapida: `mobile/README.md`
+
+La versione desktop resta invariata (entry point `main.py`).

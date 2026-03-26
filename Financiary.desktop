@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Own Finance
+Comment=Dashboard investimenti
+Exec=bash -lc 'DESKTOP_PATH="%k"; BASE_DIR="$(dirname "$DESKTOP_PATH")"; exec "$BASE_DIR/launch_financiary.sh"'
+Icon=dollar
+Terminal=false
+Categories=Office;Finance;
+StartupNotify=true
+StartupWMClass=OwnFinance

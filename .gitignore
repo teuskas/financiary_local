@@ -1,8 +1,10 @@
 .env
 .venv/
+.venv-mobile/
 __pycache__/
 *.pyc
 *.pyo
+/.tmp_*
 dist/
 build/
 *.spec
@@ -11,3 +13,9 @@ get_refresh_token.py
 
 _bondora.py
 _explore.py
+
+mobile/.buildozer/
+mobile/bin/
+mobile/build_apk_run.log
+mobile/own_finance_mobile/embedded_creds.py
+
