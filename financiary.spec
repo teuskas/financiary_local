@@ -84,6 +84,8 @@ a = Analysis(
         # Certificati SSL (necessari per HTTPS verso Dropbox)
         'certifi',
         'ssl',
+        # Richiesto da pkg_resources a runtime (hook pyi_rth_pkgres)
+        'platformdirs',
         # Moduli standard usati
         'threading',
         'io',

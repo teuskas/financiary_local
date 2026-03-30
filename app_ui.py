@@ -18,7 +18,10 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from auth import get_dropbox_client
 from parser_2026 import (get_tables, get_fixed_platform_goals, get_gt_anno_data,
                          get_bondo_evo_daily_values, get_gpp_anno_data,
-                         detect_current_year_sheet, invalidate_cache, MESI)
+                         get_total_monthly_comparison_data, get_monthly_comparison_total,
+                         get_monthly_comparison_chart_points,
+                         detect_current_year_sheet, invalidate_cache, MESI,
+                         MONTHLY_COMPARISON_SCOPES)
 from numbers import Real
 
 # ── Palette colori ──────────────────────────────────────────────
@@ -116,6 +119,24 @@ class App(tk.Tk):
         self.gpp_compare_tree: ttk.Treeview | None = None
         self.gpp_chart_frame: tk.Frame | None = None
         self.gpp_mpl_canvas: FigureCanvasTkAgg | None = None
+
+        # Confronto totale mensile (storico + anno corrente)
+        self.ctm_data: dict[str, object] = {}
+        self.ctm_window: tk.Toplevel | None = None
+        self.ctm_scope_var = tk.StringVar()
+        self.ctm_scope_cb: ttk.Combobox | None = None
+        self.ctm_hint_var = tk.StringVar(value="")
+        self.ctm_table_canvas: tk.Canvas | None = None
+        self.ctm_table_body: tk.Frame | None = None
+        self.ctm_tooltip: tk.Toplevel | None = None
+        self.ctm_tooltip_label: tk.Label | None = None
+        self.ctm_graph_window: tk.Toplevel | None = None
+        self.ctm_graph_frame: tk.Frame | None = None
+        self.ctm_graph_year_var = tk.StringVar()
+        self.ctm_graph_year_cb: ttk.Combobox | None = None
+        self.ctm_graph_title_var = tk.StringVar(value="")
+        self.ctm_graph_hint_var = tk.StringVar(value="")
+        self.ctm_graph_mpl_canvas: FigureCanvasTkAgg | None = None
 
         # Medie mensili
         self.mm_window: tk.Toplevel | None = None
@@ -602,6 +623,23 @@ class App(tk.Tk):
         )
         link_previsionale.pack(side="top", anchor="w", padx=10, pady=(0, 8))
 
+        link_confronto_totale = tk.Button(
+            content,
+            text="Confronto totale mensile",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self._go_to_ctm_window,
+        )
+        link_confronto_totale.pack(side="top", anchor="w", padx=10, pady=(0, 8))
+
     def _build_bondora_evolution_tab(self, parent,):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
         wrapper.pack(fill="both", expand=True, padx=16, pady=16)
@@ -774,7 +812,16 @@ class App(tk.Tk):
             gt_anno = get_gt_anno_data(dbx)
             bondo_evo_data = get_bondo_evo_daily_values(dbx)
             gpp_data = get_gpp_anno_data(dbx)
-            self.after(0, lambda: self._populate_all(tables, goals, gt_anno, bondo_evo_data, gpp_data, sheet_anno))
+            ctm_data = get_total_monthly_comparison_data(dbx)
+            self.after(0, lambda: self._populate_all(
+                tables,
+                goals,
+                gt_anno,
+                bondo_evo_data,
+                gpp_data,
+                ctm_data,
+                sheet_anno,
+            ))
             self._set_status("Dati caricati con successo.")
         except Exception as ex:
             self.after(0, lambda: messagebox.showerror("Errore", str(ex)))
@@ -782,12 +829,14 @@ class App(tk.Tk):
 
     def _populate_all(self, tables: dict, goals: dict[str, float], gt_anno: dict[str, object],
                       bondo_evo_data: dict[float, dict[str, object]], gpp_data: dict[str, object],
+                      ctm_data: dict[str, object],
                       sheet_anno: str):
         self.tables = tables
         self.platform_goals = goals
         self.gt_data = gt_anno
         self.bondo_evo_data = bondo_evo_data
         self.gpp_data = gpp_data
+        self.ctm_data = ctm_data
         self.current_year_sheet = sheet_anno
 
         # Aggiorna titolo finestra e header con l'anno rilevato
@@ -2250,6 +2299,531 @@ class App(tk.Tk):
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
         self.gpp_mpl_canvas = canvas
+
+    # ── Confronto Totale Mensile ───────────────────────────────
+
+    def _go_to_ctm_window(self):
+        if self.ctm_window is not None and self.ctm_window.winfo_exists():
+            self.ctm_window.deiconify()
+            self.ctm_window.lift()
+            self.ctm_window.focus_force()
+            return
+
+        self.ctm_window = tk.Toplevel(self)
+        self.ctm_window.title("Own Finance - Confronto Totale Mensile")
+        self.ctm_window.geometry("1200x520")
+        self.ctm_window.configure(bg=BG_TABLE)
+        self.ctm_window.minsize(900, 420)
+        self.ctm_window.protocol("WM_DELETE_WINDOW", self._close_ctm_window)
+
+        self._build_ctm_window(self.ctm_window)
+        self._render_ctm_table()
+
+    def _close_ctm_window(self):
+        self._hide_ctm_tooltip()
+        self._close_ctm_graph_window()
+        if self.ctm_window is not None and self.ctm_window.winfo_exists():
+            self.ctm_window.destroy()
+        self.ctm_window = None
+        self.ctm_scope_cb = None
+        self.ctm_table_canvas = None
+        self.ctm_table_body = None
+
+    def _get_ctm_scope(self) -> str:
+        scope = self.ctm_scope_var.get().strip()
+        return scope if scope in MONTHLY_COMPARISON_SCOPES else MONTHLY_COMPARISON_SCOPES[0]
+
+    def _update_ctm_hint(self):
+        scope = self._get_ctm_scope()
+        if scope == "Bondora + Mintos":
+            self.ctm_hint_var.set(
+                "Passa il mouse sulle celle mese per vedere il dettaglio Bondora/Mintos e il loro totale combinato."
+            )
+        else:
+            self.ctm_hint_var.set(
+                "Passa il mouse sulle celle mese per vedere il dettaglio Bondora/Mintos/ReLender."
+            )
+
+    def _on_ctm_scope_change(self):
+        self._hide_ctm_tooltip()
+        self._render_ctm_table()
+        if self.ctm_graph_window is not None and self.ctm_graph_window.winfo_exists():
+            self._render_ctm_graph()
+
+    def _show_ctm_graph_window(self):
+        if self.ctm_graph_window is not None and self.ctm_graph_window.winfo_exists():
+            self._init_ctm_graph_filters()
+            self.ctm_graph_window.deiconify()
+            self.ctm_graph_window.lift()
+            self.ctm_graph_window.focus_force()
+            self._render_ctm_graph()
+            return
+
+        self.ctm_graph_window = tk.Toplevel(self)
+        self.ctm_graph_window.title("Own Finance - Grafico confronto totale mensile")
+        self.ctm_graph_window.geometry("980x560")
+        self.ctm_graph_window.configure(bg=BG_TABLE)
+        self.ctm_graph_window.minsize(780, 460)
+        self.ctm_graph_window.protocol("WM_DELETE_WINDOW", self._close_ctm_graph_window)
+
+        wrapper = tk.Frame(self.ctm_graph_window, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            textvariable=self.ctm_graph_title_var,
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Chiudi",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_ctm_graph_window,
+        ).pack(side="right")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(10, 0))
+
+        tk.Label(controls, text="Anno", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.ctm_graph_year_cb = ttk.Combobox(
+            controls,
+            textvariable=self.ctm_graph_year_var,
+            state="readonly",
+            width=14,
+            values=[],
+        )
+        self.ctm_graph_year_cb.pack(side="left", padx=(8, 0))
+        self.ctm_graph_year_cb.bind("<<ComboboxSelected>>", lambda _e: self._render_ctm_graph())
+        self._init_ctm_graph_filters()
+
+        tk.Label(
+            wrapper,
+            textvariable=self.ctm_graph_hint_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", pady=(8, 10))
+
+        self.ctm_graph_frame = tk.Frame(wrapper, bg=BG_TABLE)
+        self.ctm_graph_frame.pack(fill="both", expand=True)
+        self._render_ctm_graph()
+
+    def _close_ctm_graph_window(self):
+        if self.ctm_graph_mpl_canvas is not None:
+            try:
+                self.ctm_graph_mpl_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self.ctm_graph_mpl_canvas = None
+        if self.ctm_graph_window is not None and self.ctm_graph_window.winfo_exists():
+            self.ctm_graph_window.destroy()
+        self.ctm_graph_window = None
+        self.ctm_graph_frame = None
+        self.ctm_graph_year_cb = None
+
+    def _init_ctm_graph_filters(self):
+        years = [str(year) for year in self.ctm_data.get("years", [])] if isinstance(self.ctm_data, dict) else []
+        options = ["Totale"] + years
+        if self.ctm_graph_year_cb is not None:
+            self.ctm_graph_year_cb["values"] = options
+        if self.ctm_graph_year_var.get() not in options:
+            self.ctm_graph_year_var.set("Totale")
+
+    def _get_ctm_graph_year_filter(self) -> str | None:
+        selected = self.ctm_graph_year_var.get().strip()
+        return None if not selected or selected == "Totale" else selected
+
+    def _clear_ctm_graph(self):
+        if self.ctm_graph_mpl_canvas is not None:
+            try:
+                self.ctm_graph_mpl_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self.ctm_graph_mpl_canvas = None
+        if self.ctm_graph_frame is not None:
+            for widget in self.ctm_graph_frame.winfo_children():
+                widget.destroy()
+
+    def _render_ctm_graph(self):
+        if self.ctm_graph_frame is None:
+            return
+
+        self._clear_ctm_graph()
+        scope = self._get_ctm_scope()
+        selected_year = self._get_ctm_graph_year_filter()
+        title_suffix = "Totale" if selected_year is None else selected_year
+        self.ctm_graph_title_var.set(f"Grafico confronto totale mensile – {scope} – {title_suffix}")
+
+        points = get_monthly_comparison_chart_points(
+            self.ctm_data,
+            scope=scope,
+            year_filter=selected_year,
+            positive_only=True,
+        )
+        if not points:
+            if selected_year is None:
+                self.ctm_graph_hint_var.set("Nessun mese con guadagno positivo disponibile per la vista selezionata.")
+            else:
+                self.ctm_graph_hint_var.set(
+                    f"Nessun mese con guadagno positivo disponibile per l'anno {selected_year}."
+                )
+            tk.Label(
+                self.ctm_graph_frame,
+                text="Nessun dato disponibile per il grafico.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack(anchor="center", expand=True)
+            return
+
+        if selected_year is None:
+            self.ctm_graph_hint_var.set(
+                "Istogramma cronologico dei mesi con guadagno positivo nella vista selezionata."
+            )
+        else:
+            self.ctm_graph_hint_var.set(
+                f"Istogramma dei mesi con guadagno positivo per l'anno {selected_year}."
+            )
+
+        labels = [point["label"] for point in points]
+        values = [float(point["value"]) for point in points]
+        current_year = str(datetime.now().year)
+
+        import numpy as np
+
+        fig_width = max(7.5, min(16.0, len(labels) * 0.65))
+        fig, ax = plt.subplots(figsize=(fig_width, 4.4))
+        fig.patch.set_facecolor(BG_TABLE)
+        ax.set_facecolor(BG_TABLE)
+
+        x = np.arange(len(labels))
+        colors = [FG_HEADER if str(point["year"]) == current_year else FG_SOMMA for point in points]
+        bars = ax.bar(x, values, color=colors, alpha=0.9, width=0.62)
+
+        max_val = max(values) if values else 0.0
+        offset = max(max_val * 0.015, 0.02)
+        for bar_rect, value in zip(bars, values):
+            ax.text(
+                bar_rect.get_x() + bar_rect.get_width() / 2,
+                bar_rect.get_height() + offset,
+                self._format_number_it(value, 2),
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                color=FG,
+                rotation=0,
+            )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right", color=FG, fontsize=8)
+        ax.tick_params(axis="y", colors=FG, labelsize=8)
+        ax.spines["bottom"].set_color(FG)
+        ax.spines["left"].set_color(FG)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.yaxis.label.set_color(FG)
+        ax.set_ylabel("EUR", color=FG, fontsize=9)
+        chart_title = f"{scope} – guadagni mensili"
+        if selected_year is not None:
+            chart_title = f"{chart_title} – {selected_year}"
+        ax.set_title(chart_title, color=FG_HEADER, fontsize=10, pad=10)
+        ax.grid(axis="y", color="#585b70", linestyle="--", linewidth=0.5, alpha=0.6)
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self.ctm_graph_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.ctm_graph_mpl_canvas = canvas
+
+    def _build_ctm_window(self, parent):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text="Confronto totale mensile",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Torna indietro",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_ctm_window,
+        ).pack(side="right")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(10, 8))
+
+        tk.Label(controls, text="Vista", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.ctm_scope_cb = ttk.Combobox(
+            controls,
+            textvariable=self.ctm_scope_var,
+            state="readonly",
+            width=18,
+            values=list(MONTHLY_COMPARISON_SCOPES),
+        )
+        self.ctm_scope_cb.pack(side="left", padx=(8, 12))
+        self.ctm_scope_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_ctm_scope_change())
+        if not self.ctm_scope_var.get():
+            self.ctm_scope_var.set(MONTHLY_COMPARISON_SCOPES[0])
+
+        tk.Button(
+            controls,
+            text="Grafico",
+            bg=BG_FRAME,
+            fg=FG_HEADER,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=12,
+            command=self._show_ctm_graph_window,
+        ).pack(side="left")
+
+        tk.Label(
+            wrapper,
+            textvariable=self.ctm_hint_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+        ).pack(anchor="w", pady=(8, 8))
+
+        table_wrapper = tk.Frame(wrapper, bg=BG_TABLE)
+        table_wrapper.pack(fill="both", expand=True)
+
+        self.ctm_table_canvas = tk.Canvas(table_wrapper, bg=BG_TABLE, highlightthickness=0)
+        vsb = ttk.Scrollbar(table_wrapper, orient="vertical", command=self.ctm_table_canvas.yview)
+        hsb = ttk.Scrollbar(table_wrapper, orient="horizontal", command=self.ctm_table_canvas.xview)
+        self.ctm_table_canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        self.ctm_table_canvas.pack(side="left", fill="both", expand=True)
+
+        self.ctm_table_body = tk.Frame(self.ctm_table_canvas, bg=BG_TABLE)
+        window_id = self.ctm_table_canvas.create_window((0, 0), window=self.ctm_table_body, anchor="nw")
+
+        def _refresh_scrollregion(_event=None):
+            if self.ctm_table_canvas is not None:
+                self.ctm_table_canvas.configure(scrollregion=self.ctm_table_canvas.bbox("all"))
+
+        def _sync_width(event):
+            if self.ctm_table_canvas is None or self.ctm_table_body is None:
+                return
+            requested = self.ctm_table_body.winfo_reqwidth()
+            self.ctm_table_canvas.itemconfigure(window_id, width=max(event.width, requested))
+
+        self.ctm_table_body.bind("<Configure>", _refresh_scrollregion)
+        self.ctm_table_canvas.bind("<Configure>", _sync_width)
+
+    def _render_ctm_table(self):
+        if self.ctm_table_body is None:
+            return
+
+        self._update_ctm_hint()
+
+        for child in self.ctm_table_body.winfo_children():
+            child.destroy()
+
+        if not isinstance(self.ctm_data, dict) or not self.ctm_data:
+            tk.Label(
+                self.ctm_table_body,
+                text="Dati confronto totale mensile non disponibili.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack(anchor="w", padx=10, pady=10)
+            return
+
+        months = list(self.ctm_data.get("months", MESI))
+        rows = list(self.ctm_data.get("rows", []))
+        scope = self._get_ctm_scope()
+
+        display_rows: list[dict[str, object]] = []
+        for row in rows:
+            details = row.get("details", {}) if isinstance(row.get("details", {}), dict) else {}
+            monthly_totals = {
+                month: get_monthly_comparison_total(
+                    details.get(month, {}) if isinstance(details.get(month, {}), dict) else {},
+                    scope,
+                )
+                for month in months
+            }
+            annual_total = sum(monthly_totals.values())
+            if any(abs(val) > 1e-9 for val in monthly_totals.values()):
+                display_rows.append(
+                    {
+                        "year": str(row.get("year", "")),
+                        "details": details,
+                        "monthly_totals": monthly_totals,
+                        "annual_total": annual_total,
+                    }
+                )
+
+        if not display_rows:
+            tk.Label(
+                self.ctm_table_body,
+                text="Nessun anno con dati trovato per la vista selezionata.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack(anchor="w", padx=10, pady=10)
+            return
+
+        headers = ["Anno"] + [m.capitalize() for m in months] + ["Totale"]
+        for col_idx, header in enumerate(headers):
+            width = 84 if col_idx > 0 else 80
+            if header == "Totale":
+                width = 96
+            tk.Label(
+                self.ctm_table_body,
+                text=header,
+                font=FONT_TAB,
+                bg=BG_FRAME,
+                fg=FG_HEADER,
+                padx=8,
+                pady=8,
+                width=width // 8,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=0, column=col_idx, sticky="nsew")
+
+        for row_idx, row in enumerate(display_rows, start=1):
+            year = str(row.get("year", ""))
+            monthly_totals = row.get("monthly_totals", {}) if isinstance(row.get("monthly_totals", {}), dict) else {}
+            details = row.get("details", {}) if isinstance(row.get("details", {}), dict) else {}
+            annual_total = float(row.get("annual_total", 0.0) or 0.0)
+
+            tk.Label(
+                self.ctm_table_body,
+                text=year,
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_HEADER,
+                padx=8,
+                pady=7,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=row_idx, column=0, sticky="nsew")
+
+            for month_col, month in enumerate(months, start=1):
+                month_total = float(monthly_totals.get(month, 0.0) or 0.0)
+                month_details = details.get(month, {}) if isinstance(details.get(month, {}), dict) else {}
+                bondora = float(month_details.get("Bondora", 0.0) or 0.0)
+                mintos = float(month_details.get("Mintos", 0.0) or 0.0)
+                relender = float(month_details.get("ReLender", 0.0) or 0.0)
+
+                cell = tk.Label(
+                    self.ctm_table_body,
+                    text=self._format_number_it(month_total, 2),
+                    font=FONT_TABLE,
+                    bg=BG_TABLE,
+                    fg=FG_SOMMA if month_total >= 0 else FG_NEGATIVE,
+                    padx=8,
+                    pady=7,
+                    anchor="center",
+                    highlightthickness=1,
+                    highlightbackground=BG,
+                )
+                cell.grid(row=row_idx, column=month_col, sticky="nsew")
+
+                if scope == "Bondora + Mintos":
+                    tooltip_text = (
+                        f"{year} - {month.capitalize()}\n"
+                        f"Bondora: {self._format_money_it(bondora)}\n"
+                        f"Mintos: {self._format_money_it(mintos)}\n"
+                        f"Totale Bondora + Mintos: {self._format_money_it(month_total)}"
+                    )
+                else:
+                    tooltip_text = (
+                        f"{year} - {month.capitalize()}\n"
+                        f"Bondora: {self._format_money_it(bondora)}\n"
+                        f"Mintos: {self._format_money_it(mintos)}\n"
+                        f"ReLender: {self._format_money_it(relender)}\n"
+                        f"Totale: {self._format_money_it(month_total)}"
+                    )
+                self._bind_ctm_tooltip(cell, tooltip_text)
+
+            tk.Label(
+                self.ctm_table_body,
+                text=self._format_number_it(annual_total, 2),
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_HEADER,
+                padx=8,
+                pady=7,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=row_idx, column=len(months) + 1, sticky="nsew")
+
+    def _bind_ctm_tooltip(self, widget: tk.Widget, text: str):
+        widget.bind("<Enter>", lambda event, t=text: self._show_ctm_tooltip(event, t))
+        widget.bind("<Motion>", self._move_ctm_tooltip)
+        widget.bind("<Leave>", lambda _event: self._hide_ctm_tooltip())
+
+    def _show_ctm_tooltip(self, event, text: str):
+        if self.ctm_window is None or not self.ctm_window.winfo_exists():
+            return
+        if self.ctm_tooltip is None or not self.ctm_tooltip.winfo_exists():
+            self.ctm_tooltip = tk.Toplevel(self.ctm_window)
+            self.ctm_tooltip.overrideredirect(True)
+            self.ctm_tooltip.attributes("-topmost", True)
+            self.ctm_tooltip_label = tk.Label(
+                self.ctm_tooltip,
+                text="",
+                bg=BG_FRAME,
+                fg=FG,
+                font=FONT_SMALL,
+                justify="left",
+                padx=8,
+                pady=6,
+                relief="solid",
+                bd=1,
+            )
+            self.ctm_tooltip_label.pack()
+
+        if self.ctm_tooltip_label is not None:
+            self.ctm_tooltip_label.config(text=text)
+
+        self._move_ctm_tooltip(event)
+
+    def _move_ctm_tooltip(self, event):
+        if self.ctm_tooltip is None or not self.ctm_tooltip.winfo_exists():
+            return
+        x = int(event.x_root) + 14
+        y = int(event.y_root) + 12
+        self.ctm_tooltip.geometry(f"+{x}+{y}")
+
+    def _hide_ctm_tooltip(self):
+        if self.ctm_tooltip is not None and self.ctm_tooltip.winfo_exists():
+            self.ctm_tooltip.destroy()
+        self.ctm_tooltip = None
+        self.ctm_tooltip_label = None
 
 
 def main():

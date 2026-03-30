@@ -25,9 +25,18 @@ TITOLI = {
 }
 
 FILE_PATH = "/me/new total inv.xlsx"
+ARCHIVE_FOLDER_PATH = "/me/ARCHIVIO INV"
+ARCHIVE_FILE_CANDIDATES = [
+    "/me/ARCHIVIO INV/ARCHIVIO INV.xlsx",
+    "/me/ARCHIVIO INV/ARCHIVIO INV.xlsm",
+    "/ARCHIVIO INV/ARCHIVIO INV.xlsx",
+    "/ARCHIVIO INV/ARCHIVIO INV.xlsm",
+]
 SHEET_GT_ANNO = "GT_ANNO"
 SHEET_BONDO_EVO = "Bondo_Evo"
 SHEET_GPP_ANNO = "GPP_ANNO"
+
+MONTHLY_COMPARISON_SCOPES = ("Totale", "Bondora + Mintos")
 
 GT_TITLE_GUADAGNI = "PIATTAFORMA/ANNO"
 GT_TITLE_MEDIE = "MEDIA 12 M"
@@ -37,23 +46,23 @@ _FIXED_PLATFORM_ROWS = [36, 37]  # indici zero-based
 _PLATFORM_COL = 4
 _GOAL_COL = 6
 
-# Cache del contenuto grezzo del file per evitare download multipli
-_file_cache: bytes | None = None
+# Cache del contenuto grezzo dei file per evitare download multipli
+_file_cache: dict[str, bytes] = {}
 
 
-def _download_file(dbx: dropbox.Dropbox) -> bytes:
-    """Scarica il file una sola volta per sessione e lo mette in cache."""
+def _download_file(dbx: dropbox.Dropbox, file_path: str = FILE_PATH) -> bytes:
+    """Scarica il file richiesto una sola volta per sessione e lo mette in cache."""
     global _file_cache
-    if _file_cache is None:
-        _, response = dbx.files_download(FILE_PATH)
-        _file_cache = response.content
-    return _file_cache
+    if file_path not in _file_cache:
+        _, response = dbx.files_download(file_path)
+        _file_cache[file_path] = response.content
+    return _file_cache[file_path]
 
 
 def invalidate_cache():
     """Invalida la cache del file (utile se si vuole ricaricare i dati)."""
     global _file_cache
-    _file_cache = None
+    _file_cache = {}
 
 
 def detect_current_year_sheet(dbx: dropbox.Dropbox) -> str:
@@ -83,6 +92,10 @@ def detect_current_year_sheet(dbx: dropbox.Dropbox) -> str:
 
 def _load_raw(dbx: dropbox.Dropbox, sheet_name: str) -> pd.DataFrame:
     content = _download_file(dbx)
+    return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, header=None)
+
+
+def _load_raw_from_content(content: bytes, sheet_name: str) -> pd.DataFrame:
     return pd.read_excel(io.BytesIO(content), sheet_name=sheet_name, header=None)
 
 
@@ -199,6 +212,228 @@ def _normalize_text(value) -> str:
     # Normalizza varianti tipo "PIATTAFORMA / ANNO" -> "PIATTAFORMA/ANNO"
     text = text.replace(" / ", "/").replace("/ ", "/").replace(" /", "/")
     return " ".join(text.split())
+
+
+def _normalize_platform_key(value: str) -> str:
+    return (
+        str(value)
+        .strip()
+        .lower()
+        .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")
+    )
+
+
+def _extract_year_sheets_from_content(content: bytes) -> list[str]:
+    xl = pd.ExcelFile(io.BytesIO(content))
+    years: list[str] = []
+    for name in xl.sheet_names:
+        raw = str(name).strip()
+        try:
+            year = int(raw)
+        except ValueError:
+            continue
+        if 2000 <= year <= 2100:
+            years.append(str(year))
+    return sorted(years, key=int)
+
+
+def _find_archive_file_path(dbx: dropbox.Dropbox) -> str | None:
+    for path in ARCHIVE_FILE_CANDIDATES:
+        try:
+            dbx.files_get_metadata(path)
+            return path
+        except Exception:
+            continue
+
+    # Fallback: cerca un file excel nella cartella ARCHIVIO INV
+    try:
+        result = dbx.files_list_folder(ARCHIVE_FOLDER_PATH)
+    except Exception:
+        return None
+
+    for entry in result.entries:
+        name = getattr(entry, "name", "")
+        lower_name = str(name).lower()
+        if lower_name.startswith("archivio inv") and lower_name.endswith((".xlsx", ".xlsm")):
+            return getattr(entry, "path_display", None) or getattr(entry, "path_lower", None)
+    return None
+
+
+def _extract_monthly_platform_breakdown(df_raw: pd.DataFrame) -> dict[str, dict[str, float]]:
+    guadagni_df = _extract_table(df_raw, TITOLI["guadagni"])
+    if guadagni_df is None or guadagni_df.empty:
+        return {}
+
+    target_aliases = {
+        "Bondora": ["Bondora"],
+        "Mintos": ["Mintos"],
+        "ReLender": ["ReLender", "Re Lender", "Re-Lender", "Relender"],
+    }
+    normalized_targets = {
+        platform: {_normalize_platform_key(alias) for alias in aliases}
+        for platform, aliases in target_aliases.items()
+    }
+
+    rows_by_platform: dict[str, pd.Series] = {}
+    for _, row in guadagni_df.iterrows():
+        label = str(row.get("Piattaforma", "")).strip()
+        norm = _normalize_platform_key(label)
+        for platform, aliases in normalized_targets.items():
+            if norm in aliases:
+                rows_by_platform[platform] = row
+
+    monthly: dict[str, dict[str, float]] = {}
+    for month in MESI:
+        if month not in guadagni_df.columns:
+            continue
+        details = {
+            platform: float(_safe_float(rows_by_platform.get(platform, {}).get(month, 0.0)))
+            if platform in rows_by_platform else 0.0
+            for platform in ("Bondora", "Mintos", "ReLender")
+        }
+        details["Totale"] = details["Bondora"] + details["Mintos"] + details["ReLender"]
+        monthly[month] = details
+
+    return monthly
+
+
+def get_monthly_comparison_total(month_details: dict[str, float] | None, scope: str = "Totale") -> float:
+    """Restituisce il totale mensile coerente con la vista selezionata."""
+    details = month_details if isinstance(month_details, dict) else {}
+    bondora = float(details.get("Bondora", 0.0) or 0.0)
+    mintos = float(details.get("Mintos", 0.0) or 0.0)
+    relender = float(details.get("ReLender", 0.0) or 0.0)
+
+    if scope == "Bondora + Mintos":
+        return bondora + mintos
+    return bondora + mintos + relender
+
+
+def get_monthly_comparison_chart_points(
+    comparison_data: dict[str, object] | None,
+    scope: str = "Totale",
+    year_filter: str | None = None,
+    positive_only: bool = True,
+) -> list[dict[str, object]]:
+    """Appiattisce il confronto mensile in una serie cronologica pronta per il grafico."""
+    data = comparison_data if isinstance(comparison_data, dict) else {}
+    months = list(data.get("months", MESI))
+    rows = list(data.get("rows", []))
+    points: list[dict[str, object]] = []
+
+    for row in rows:
+        year = str(row.get("year", "")).strip()
+        details = row.get("details", {}) if isinstance(row.get("details", {}), dict) else {}
+        if not year:
+            continue
+        if year_filter and year_filter != "Totale" and year != str(year_filter):
+            continue
+
+        for month in months:
+            month_details = details.get(month, {}) if isinstance(details.get(month, {}), dict) else {}
+            value = get_monthly_comparison_total(month_details, scope)
+            if positive_only and value <= 0:
+                continue
+            if not positive_only and abs(value) <= 1e-9:
+                continue
+
+            month_idx = MESI.index(month) if month in MESI else len(MESI)
+            label = f"{month[:3].capitalize()} {year}"
+            points.append(
+                {
+                    "year": year,
+                    "month": month,
+                    "month_index": month_idx,
+                    "label": label,
+                    "value": float(value),
+                }
+            )
+
+    points.sort(key=lambda item: (int(item["year"]), int(item["month_index"])))
+    return points
+
+
+def _build_yearly_monthly_data_from_content(content: bytes, year_sheets: list[str]) -> dict[str, dict[str, dict[str, float]]]:
+    output: dict[str, dict[str, dict[str, float]]] = {}
+    for year in year_sheets:
+        try:
+            df_raw = _load_raw_from_content(content, year)
+            monthly = _extract_monthly_platform_breakdown(df_raw)
+            if monthly:
+                output[year] = monthly
+        except Exception:
+            continue
+    return output
+
+
+def get_total_monthly_comparison_data(dbx: dropbox.Dropbox) -> dict[str, object]:
+    """
+    Restituisce il confronto totale mensile (Bondora + Mintos + ReLender) su base annuale.
+
+    Sorgenti:
+    - anni storici: file ARCHIVIO INV in /me/ARCHIVIO INV
+    - anno corrente: file NEW TOTAL INV (sheet anno corrente rilevato automaticamente)
+    """
+    current_content = _download_file(dbx, FILE_PATH)
+    current_year = detect_current_year_sheet(dbx)
+
+    # Storico da ARCHIVIO INV
+    merged_year_data: dict[str, dict[str, dict[str, float]]] = {}
+    archive_path = _find_archive_file_path(dbx)
+    if archive_path:
+        try:
+            archive_content = _download_file(dbx, archive_path)
+            archive_years = _extract_year_sheets_from_content(archive_content)
+            merged_year_data.update(_build_yearly_monthly_data_from_content(archive_content, archive_years))
+        except Exception:
+            pass
+
+    # Corrente da NEW TOTAL INV (prioritario sull'archivio)
+    try:
+        current_df_raw = _load_raw_from_content(current_content, current_year)
+        current_monthly = _extract_monthly_platform_breakdown(current_df_raw)
+        if current_monthly:
+            merged_year_data[current_year] = current_monthly
+    except Exception:
+        pass
+
+    years = sorted(merged_year_data.keys(), key=int)
+    rows: list[dict[str, object]] = []
+
+    for year in years:
+        month_data = merged_year_data.get(year, {})
+        monthly_totals = {month: float(month_data.get(month, {}).get("Totale", 0.0)) for month in MESI}
+        details = {
+            month: {
+                "Bondora": float(month_data.get(month, {}).get("Bondora", 0.0)),
+                "Mintos": float(month_data.get(month, {}).get("Mintos", 0.0)),
+                "ReLender": float(month_data.get(month, {}).get("ReLender", 0.0)),
+            }
+            for month in MESI
+        }
+        annual_total = sum(monthly_totals.values())
+
+        # Include solo anni con almeno un valore numerico valorizzato
+        if not any(abs(val) > 1e-9 for val in monthly_totals.values()):
+            continue
+
+        rows.append(
+            {
+                "year": year,
+                "monthly_totals": monthly_totals,
+                "details": details,
+                "annual_total": annual_total,
+            }
+        )
+
+    return {
+        "months": MESI,
+        "years": [row["year"] for row in rows],
+        "rows": rows,
+        "current_year": current_year,
+    }
 
 
 def _find_gt_title_rows(df_raw: pd.DataFrame) -> list[int]:
