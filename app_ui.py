@@ -72,9 +72,10 @@ class App(tk.Tk):
         self._icon_image = None
         self._set_window_icon()
         self.title("Own Finance – 2026")
-        self.geometry("1100x480")
         self.configure(bg=BG)
         self.resizable(True, True)
+        # Apri a schermo intero (compatibile Linux/Windows/macOS)
+        self.after(50, self._maximize_window)
 
         self.graph_platform_var = tk.StringVar()
         self.graph_month_var = tk.StringVar()
@@ -184,6 +185,27 @@ class App(tk.Tk):
         threading.Thread(target=self._load_data, daemon=True).start()
 
     # ── Layout ──────────────────────────────────────────────────
+
+    # ── Utilità finestra ────────────────────────────────────────
+
+    def _maximize_window(self):
+        """Apre l'app a schermo intero in modo cross-platform."""
+        try:
+            # Linux / GNOME (extended window manager)
+            self.attributes("-zoomed", True)
+        except tk.TclError:
+            pass
+        try:
+            # Windows
+            self.state("zoomed")
+        except tk.TclError:
+            pass
+
+    def _refocus_main(self):
+        """Riporta la finestra principale in primo piano."""
+        self.deiconify()
+        self.lift()
+        self.focus_force()
 
     def _build_header(self):
         hdr = tk.Frame(self, bg=BG, pady=10)
@@ -1008,6 +1030,7 @@ class App(tk.Tk):
         self.gt_year_cb = None
         self.gt_platform_cb = None
         self.gt_metric_cb = None
+        self._refocus_main()
 
     def _back_to_progressive_tab(self):
         """Ritorna al tab Statistiche progressive e chiude la finestra GT_ANNO."""
@@ -1017,6 +1040,7 @@ class App(tk.Tk):
         frame = self.tab_frames.get("statistiche_progressive")
         if frame is not None:
             self.notebook.select(frame)
+        self._refocus_main()
 
     # ── Data population and refresh ─────────────────────────────
 
@@ -1476,6 +1500,7 @@ class App(tk.Tk):
             self.pv_window.destroy()
         self.pv_window = None
         self.pv_platform_cb = None
+        self._refocus_main()
 
     def _build_pv_window(self, parent):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
@@ -1713,6 +1738,7 @@ class App(tk.Tk):
         self.mm_month_cb = None
         self.mm_platform_cb = None
         self.mm_year_cb = None
+        self._refocus_main()
 
     def _build_mm_window(self, parent):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
@@ -2047,6 +2073,7 @@ class App(tk.Tk):
         self.gpp_compare_tree = None
         self.gpp_chart_frame = None
         self.gpp_mpl_canvas = None
+        self._refocus_main()
 
     def _build_gpp_window(self, parent):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
@@ -2341,6 +2368,7 @@ class App(tk.Tk):
         self.ctm_scope_cb = None
         self.ctm_table_canvas = None
         self.ctm_table_body = None
+        self._refocus_main()
 
     def _get_ctm_scope(self) -> str:
         scope = self.ctm_scope_var.get().strip()
@@ -2445,6 +2473,10 @@ class App(tk.Tk):
         self.ctm_graph_window = None
         self.ctm_graph_frame = None
         self.ctm_graph_year_cb = None
+        # Riporta in primo piano la finestra ctm padre se ancora aperta
+        if self.ctm_window is not None and self.ctm_window.winfo_exists():
+            self.ctm_window.lift()
+            self.ctm_window.focus_force()
 
     def _init_ctm_graph_filters(self):
         years = [str(year) for year in self.ctm_data.get("years", [])] if isinstance(self.ctm_data, dict) else []
