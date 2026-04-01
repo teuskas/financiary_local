@@ -3003,22 +3003,38 @@ class App(tk.Tk):
         return forecast, hypothetical, projected_gain, hint
 
     def _build_ntb_previsionale(self, parent: tk.Frame, extra: float):
-        forecast, hypothetical, projected_gain, hint = self._calculate_bondora_forecast_with_extra(extra)
+        bondora_forecast, _, _, bondora_hint = self._calculate_bondora_forecast_with_extra(extra)
+        mintos_forecast, _, _, mintos_hint = self._calculate_mintos_forecast()
+        total_forecast = bondora_forecast + mintos_forecast
         year = datetime.now().year
 
         tk.Label(
             parent,
-            text=f"Previsionale Bondora a fine {year} con +{self._format_money_it(extra)}",
+            text=f"Previsionale totale a fine {year} (con +{self._format_money_it(extra)} su Bondora)",
             font=("Segoe UI", 10, "bold"), bg=BG_TABLE, fg=FG_RESIDUO,
         ).pack(anchor="w")
         tk.Label(
             parent,
-            text=self._format_money_it(forecast),
+            text=self._format_money_it(total_forecast),
             font=("Segoe UI", 18, "bold"), bg=BG_TABLE, fg=FG_SOMMA,
         ).pack(anchor="w", pady=(4, 0))
+
+        details = (
+            f"Dettaglio piattaforme:\n"
+            f"- Bondora: {self._format_money_it(bondora_forecast)}\n"
+            f"- Mintos: {self._format_money_it(mintos_forecast)}\n"
+            f"- Totale: {self._format_money_it(total_forecast)}\n\n"
+            f"{bondora_hint}\n\n"
+            f"Totale atteso fine anno Mintos: {self._format_money_it(mintos_forecast)}\n"
+            f"{mintos_hint}"
+        )
         tk.Label(
-            parent, text=hint,
-            font=FONT_SMALL, bg=BG_TABLE, fg=FG, justify="left",
+            parent,
+            text=details,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
         ).pack(anchor="w", pady=(8, 0))
 
     # ── Next to be – Evolution ──────────────────────────────────
