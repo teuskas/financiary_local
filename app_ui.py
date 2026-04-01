@@ -55,7 +55,8 @@ TAB_LABELS = {
     "grafici":      "📉  Grafici",
     "statistiche_progressive": "🧮  Statistiche progressive",
     "bondora_evolution": "🧬  Bondora Evolution",
-    "investimenti_attuali_vivi": "💵  Investimenti attuali vivi",
+    "investimenti_attuali_vivi": "💵  Now Alive",
+    "next_to_be":   "🎯  Next to be",
 }
 
 
@@ -165,6 +166,16 @@ class App(tk.Tk):
         self.live_mintos_value_var = tk.StringVar(value="EUR --")
         self.live_relender_value_var = tk.StringVar(value="EUR --")
 
+        # Next to be tab
+        self.ntb_mode_var = tk.StringVar(value="Previsionale")
+        self.ntb_amount_var = tk.StringVar(value="0")
+        self.ntb_evo_daily_var = tk.StringVar()
+        self.ntb_evo_daily_cb: ttk.Combobox | None = None
+        self.ntb_content_frame: tk.Frame | None = None
+        self.ntb_evo_graph_canvas: tk.Canvas | None = None
+        self.ntb_evo_info_frame: tk.Frame | None = None
+        self._ntb_virtual_evo_data: dict = {}
+
         self._build_header()
         self._build_notebook()
         self._build_statusbar()
@@ -218,6 +229,8 @@ class App(tk.Tk):
                 self._build_bondora_evolution_tab(frame)
             elif key == "investimenti_attuali_vivi":
                 self._build_live_investments_tab(frame)
+            elif key == "next_to_be":
+                self._build_next_to_be_tab(frame)
             else:
                 self.table_views[key] = self._build_data_table(frame)
 
@@ -852,6 +865,7 @@ class App(tk.Tk):
         self._init_bondo_evo_filters()
         self._refresh_bondo_evo_display()
         self._refresh_live_investments_tab()
+        self._refresh_ntb_display()
         ts = datetime.now().strftime("%d/%m/%Y %H:%M")
         self.lbl_update.config(text=f"Aggiornato: {ts}")
 
@@ -1286,6 +1300,38 @@ class App(tk.Tk):
         if sorted_display and not self.bondo_evo_daily_var.get():
             self.bondo_evo_daily_var.set(sorted_display[0])
 
+    def _draw_pie_on_canvas(self, canvas: tk.Canvas, cap_pr: float, reached: float):
+        """Disegna un grafico a torta generico su qualsiasi canvas."""
+        c = canvas
+        c.delete("all")
+        cw = GRAPH_CANVAS_W
+        ch = GRAPH_CANVAS_H
+        cx, cy = cw // 2, ch // 2
+        diameter = min(PIE_MIN_DIAMETER, cw - PIE_MARGIN * 2)
+        radius = diameter // 2
+        x0 = cx - radius
+        y0 = cy - radius
+        x1 = cx + radius
+        y1 = cy + radius
+        if cap_pr > 0:
+            completed_ratio = max(0.0, min(reached / cap_pr, 1.0))
+        else:
+            completed_ratio = 0.0
+        extent = min(359.9, completed_ratio * 360)
+        c.create_oval(x0, y0, x1, y1, fill=FG_RESIDUO, outline="")
+        if extent > 0:
+            c.create_arc(x0, y0, x1, y1, start=90, extent=-extent, fill=FG_SOMMA, outline="")
+        c.create_text(
+            (x0 + x1) / 2, (y0 + y1) / 2,
+            text=f"{completed_ratio * 100:.1f}%",
+            fill=FG_PERCENT, font=("Segoe UI", 18, "bold"),
+        )
+        legend_y = min(ch - 14, y1 + 16)
+        c.create_rectangle(40, legend_y - 7, 54, legend_y + 7, fill=FG_SOMMA, outline="")
+        c.create_text(110, legend_y, text="Completato", fill=FG, font=FONT_SMALL)
+        c.create_rectangle(cw - 130, legend_y - 7, cw - 116, legend_y + 7, fill=FG_RESIDUO, outline="")
+        c.create_text(cw - 60, legend_y, text="Residuo", fill=FG, font=FONT_SMALL)
+
     def _draw_bondo_evo_pie_chart(self, cap_pr: float, reached: float):
         """Disegna il grafico a torta per Bondora Evolution.
 
@@ -1295,40 +1341,7 @@ class App(tk.Tk):
         """
         if self.bondo_evo_graph_canvas is None:
             return
-
-        c = self.bondo_evo_graph_canvas
-        c.delete("all")
-
-        cw = GRAPH_CANVAS_W
-        ch = GRAPH_CANVAS_H
-        cx, cy = cw // 2, ch // 2
-        diameter = min(PIE_MIN_DIAMETER, cw - PIE_MARGIN * 2)
-        radius = diameter // 2
-
-        x0 = cx - radius
-        y0 = cy - radius
-        x1 = cx + radius
-        y1 = cy + radius
-
-        if cap_pr > 0:
-            completed_ratio = reached / cap_pr
-        else:
-            completed_ratio = 0
-
-        completed_ratio = max(0, min(completed_ratio, 1))
-        extent = min(359.9, completed_ratio * 360)
-
-        c.create_oval(x0, y0, x1, y1, fill=FG_RESIDUO, outline="")
-        if extent > 0:
-            c.create_arc(x0, y0, x1, y1, start=90, extent=-extent, fill=FG_SOMMA, outline="")
-
-        c.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=f"{completed_ratio * 100:.1f}%", fill=FG_PERCENT, font=("Segoe UI", 18, "bold"))
-
-        legend_y = min(ch - 14, y1 + 16)
-        c.create_rectangle(40, legend_y - 7, 54, legend_y + 7, fill=FG_SOMMA, outline="")
-        c.create_text(110, legend_y, text="Completato", fill=FG, font=FONT_SMALL)
-        c.create_rectangle(cw - 130, legend_y - 7, cw - 116, legend_y + 7, fill=FG_RESIDUO, outline="")
-        c.create_text(cw - 60, legend_y, text="Residuo", fill=FG, font=FONT_SMALL)
+        self._draw_pie_on_canvas(self.bondo_evo_graph_canvas, cap_pr, reached)
 
     def _refresh_bondo_evo_display(self):
         """Aggiorna la visualizzazione dei dettagli per il valore selezionato."""
@@ -2824,6 +2837,393 @@ class App(tk.Tk):
             self.ctm_tooltip.destroy()
         self.ctm_tooltip = None
         self.ctm_tooltip_label = None
+
+    # ── Next to be tab ──────────────────────────────────────────
+
+    def _build_next_to_be_tab(self, parent: tk.Frame):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(
+            wrapper, text="Next to be",
+            font=("Segoe UI", 12, "bold"), bg=BG_TABLE, fg=FG_HEADER,
+        ).pack(anchor="w")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(12, 0))
+
+        tk.Label(controls, text="Modalità", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        mode_cb = ttk.Combobox(
+            controls, textvariable=self.ntb_mode_var, state="readonly", width=16,
+            values=["Previsionale", "Evolution", "Attuali vivi"],
+        )
+        mode_cb.pack(side="left", padx=(8, 20))
+        mode_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_ntb_display())
+
+        tk.Label(controls, text="Importo aggiuntivo (€)", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        entry = tk.Entry(
+            controls, textvariable=self.ntb_amount_var, width=14,
+            bg=BG_FRAME, fg=FG, insertbackground=FG, relief="flat", font=FONT_TABLE,
+        )
+        entry.pack(side="left", padx=(8, 12))
+        entry.bind("<Return>", lambda _e: self._refresh_ntb_display())
+
+        tk.Button(
+            controls, text="Calcola",
+            bg=BG_FRAME, fg=FG_HEADER, activebackground=SEL_BG,
+            activeforeground=FG_HEADER, relief="flat", padx=10,
+            command=self._refresh_ntb_display,
+        ).pack(side="left")
+
+        self.ntb_content_frame = tk.Frame(wrapper, bg=BG_TABLE)
+        self.ntb_content_frame.pack(fill="both", expand=True, pady=(16, 0))
+
+    def _refresh_ntb_display(self):
+        if self.ntb_content_frame is None:
+            return
+        for child in self.ntb_content_frame.winfo_children():
+            child.destroy()
+        self.ntb_evo_graph_canvas = None
+        self.ntb_evo_info_frame = None
+        self.ntb_evo_daily_cb = None
+        self._ntb_virtual_evo_data = {}
+
+        if not self.bondo_evo_data:
+            tk.Label(
+                self.ntb_content_frame,
+                text="Dati non ancora caricati. Attendi il completamento del caricamento.",
+                bg=BG_TABLE, fg=FG_ACCENT, font=FONT_TABLE,
+            ).pack(anchor="w", pady=10)
+            return
+
+        raw_amount = self.ntb_amount_var.get().strip()
+        extra = self._parse_localized_number(raw_amount) if raw_amount else 0.0
+        if extra is None:
+            extra = 0.0
+
+        mode = self.ntb_mode_var.get()
+        if mode == "Previsionale":
+            self._build_ntb_previsionale(self.ntb_content_frame, extra)
+        elif mode == "Evolution":
+            self._build_ntb_evolution(self.ntb_content_frame, extra)
+        else:
+            self._build_ntb_attuali_vivi(self.ntb_content_frame, extra)
+
+    # ── Next to be – Previsionale ───────────────────────────────
+
+    def _calculate_bondora_forecast_with_extra(self, extra: float) -> tuple[float, float, float, str]:
+        """Previsionale Bondora a fine anno con extra aggiunto al capitale attuale."""
+        if not self.bondo_evo_data:
+            return 0.0, 0.0, 0.0, "Dati Bondora Evolution non disponibili."
+
+        today = date.today()
+        end_year = date(today.year, 12, 31)
+
+        current_amount, _ = self._get_bondora_current_snapshot()
+        hypothetical = current_amount + extra
+
+        # Daily rate ipotetico: il più alto step raggiunto con il capitale ipotetico
+        sorted_vals = sorted(self.bondo_evo_data.keys())
+        hyp_daily_rate = sorted_vals[0] if sorted_vals else 0.0
+        for val in sorted_vals:
+            cap_pr = float(self.bondo_evo_data[val].get("cap_pr", 0.0) or 0.0)
+            if cap_pr <= hypothetical:
+                hyp_daily_rate = val
+            else:
+                break
+
+        forecast = hypothetical
+
+        # Step futuri non ancora raggiunti con il capitale ipotetico
+        events: list[tuple[date, float]] = []
+        for daily, row in self.bondo_evo_data.items():
+            cap_pr_step = float(row.get("cap_pr", 0.0) or 0.0)
+            if cap_pr_step <= hypothetical:
+                continue
+            mtns_hyp = cap_pr_step - hypothetical
+            if hyp_daily_rate > 0:
+                days_to_reach = mtns_hyp / hyp_daily_rate
+            else:
+                continue
+            target_dt = today + timedelta(days=days_to_reach)
+            if today < target_dt <= end_year:
+                events.append((target_dt, float(daily)))
+        events.sort(key=lambda x: (x[0], x[1]))
+
+        event_idx = 0
+        current_rate = hyp_daily_rate
+        for day_ord in range((today + timedelta(days=1)).toordinal(), end_year.toordinal() + 1):
+            current_day = date.fromordinal(day_ord)
+            while event_idx < len(events) and events[event_idx][0] <= current_day:
+                current_rate = max(current_rate, events[event_idx][1])
+                event_idx += 1
+            forecast += current_rate
+
+        projected_gain = max(0.0, forecast - hypothetical)
+        hint = (
+            f"Capitale attuale Bondora: {self._format_money_it(current_amount)}\n"
+            f"Importo aggiuntivo ipotetico: +{self._format_money_it(extra)}\n"
+            f"Capitale ipotetico totale: {self._format_money_it(hypothetical)}\n"
+            f"Daily rate con capitale ipotetico: {self._format_number_it(hyp_daily_rate)} €/giorno\n"
+            f"Guadagno previsionale anno: {self._format_money_it(hypothetical)} + "
+            f"{self._format_money_it(projected_gain)} = {self._format_money_it(forecast)}"
+        )
+        return forecast, hypothetical, projected_gain, hint
+
+    def _build_ntb_previsionale(self, parent: tk.Frame, extra: float):
+        forecast, hypothetical, projected_gain, hint = self._calculate_bondora_forecast_with_extra(extra)
+        year = datetime.now().year
+
+        tk.Label(
+            parent,
+            text=f"Previsionale Bondora a fine {year} con +{self._format_money_it(extra)}",
+            font=("Segoe UI", 10, "bold"), bg=BG_TABLE, fg=FG_RESIDUO,
+        ).pack(anchor="w")
+        tk.Label(
+            parent,
+            text=self._format_money_it(forecast),
+            font=("Segoe UI", 18, "bold"), bg=BG_TABLE, fg=FG_SOMMA,
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(
+            parent, text=hint,
+            font=FONT_SMALL, bg=BG_TABLE, fg=FG, justify="left",
+        ).pack(anchor="w", pady=(8, 0))
+
+    # ── Next to be – Evolution ──────────────────────────────────
+
+    def _compute_ntb_evo_data(self, extra: float) -> dict:
+        """Ricalcola bondo_evo_data con extra aggiunto al capitale attuale Bondora."""
+        if not self.bondo_evo_data:
+            return {}
+
+        current_amount, _ = self._get_bondora_current_snapshot()
+        hypothetical = current_amount + extra
+        sorted_vals = sorted(self.bondo_evo_data.keys())
+
+        # Daily rate ipotetico
+        hyp_daily_rate = sorted_vals[0] if sorted_vals else 0.01
+        for val in sorted_vals:
+            cap_pr = float(self.bondo_evo_data[val].get("cap_pr", 0.0) or 0.0)
+            if cap_pr <= hypothetical:
+                hyp_daily_rate = val
+            else:
+                break
+
+        today = date.today()
+        virtual_data: dict = {}
+        for daily_val in sorted_vals:
+            row = dict(self.bondo_evo_data[daily_val])
+            cap_pr = float(row.get("cap_pr", 0.0) or 0.0)
+            dtns = row.get("dtns", 0.0)
+
+            new_mtns = cap_pr - hypothetical
+            new_is_reached = new_mtns < 0
+
+            if new_is_reached:
+                new_mdtns = None
+                new_target_date = None
+            else:
+                new_mdtns = abs(new_mtns) / hyp_daily_rate if hyp_daily_rate > 0 else row.get("mdtns")
+                new_target_date = (
+                    today + timedelta(days=float(new_mdtns)) if new_mdtns is not None else None
+                )
+
+            virtual_data[daily_val] = {
+                "cap_pr": cap_pr,
+                "dtns": dtns,
+                "mtns": new_mtns,
+                "mdtns": new_mdtns,
+                "is_reached": new_is_reached,
+                "target_date": new_target_date,
+            }
+        return virtual_data
+
+    def _build_ntb_evolution(self, parent: tk.Frame, extra: float):
+        self._ntb_virtual_evo_data = self._compute_ntb_evo_data(extra)
+        sorted_values = sorted(self._ntb_virtual_evo_data.keys())
+        sorted_display = [self._format_money_it(val, prefix="€") for val in sorted_values]
+
+        if not sorted_display:
+            tk.Label(
+                parent, text="Dati Bondora Evolution non disponibili.",
+                bg=BG_TABLE, fg=FG_ACCENT, font=FONT_TABLE,
+            ).pack(anchor="w")
+            return
+
+        # Sub-controls: dropdown cifra giornaliera
+        sub_ctrl = tk.Frame(parent, bg=BG_TABLE)
+        sub_ctrl.pack(fill="x", pady=(0, 12))
+        tk.Label(sub_ctrl, text="Cifra giornaliera", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.ntb_evo_daily_cb = ttk.Combobox(
+            sub_ctrl, textvariable=self.ntb_evo_daily_var,
+            state="readonly", width=25, values=sorted_display,
+        )
+        self.ntb_evo_daily_cb.pack(side="left", padx=(8, 0))
+        self.ntb_evo_daily_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_ntb_evo_detail())
+
+        # Default: primo step non ancora raggiunto con il capitale ipotetico
+        default_idx = 0
+        for i, val in enumerate(sorted_values):
+            if not self._ntb_virtual_evo_data[val]["is_reached"]:
+                default_idx = i
+                break
+        self.ntb_evo_daily_var.set(sorted_display[default_idx])
+
+        # Area contenuto: info a sinistra, grafico a destra
+        content = tk.Frame(parent, bg=BG_TABLE)
+        content.pack(fill="both", expand=True)
+
+        self.ntb_evo_info_frame = tk.Frame(content, bg=BG_TABLE)
+        self.ntb_evo_info_frame.pack(side="left", fill="both", padx=(0, 32))
+
+        self.ntb_evo_graph_canvas = tk.Canvas(
+            content, width=GRAPH_CANVAS_W, height=GRAPH_CANVAS_H,
+            bg=BG_TABLE, highlightthickness=0,
+        )
+        self.ntb_evo_graph_canvas.pack(side="left", padx=(16, 0), pady=(0, 8))
+
+        self._refresh_ntb_evo_detail()
+
+    def _refresh_ntb_evo_detail(self):
+        if self.ntb_evo_info_frame is None:
+            return
+        for child in self.ntb_evo_info_frame.winfo_children():
+            child.destroy()
+
+        selected_str = self.ntb_evo_daily_var.get().strip()
+        if not selected_str:
+            return
+        parsed = self._parse_localized_number(selected_str)
+        if parsed is None:
+            return
+        daily_value = float(parsed)
+
+        data = self._ntb_virtual_evo_data.get(daily_value)
+        if not data:
+            return
+
+        cap_pr      = float(data.get("cap_pr", 0.0) or 0.0)
+        dtns        = float(data.get("dtns", 0.0) or 0.0)
+        mtns        = float(data.get("mtns", 0.0) or 0.0)
+        mdtns       = data.get("mdtns")
+        target_date = data.get("target_date")
+        is_reached  = bool(data.get("is_reached", False))
+
+        # Capitale ipotetico
+        current_amount, _ = self._get_bondora_current_snapshot()
+        raw_amount = self.ntb_amount_var.get().strip()
+        extra = self._parse_localized_number(raw_amount) if raw_amount else 0.0
+        if extra is None:
+            extra = 0.0
+        hypothetical = current_amount + extra
+
+        # Grafico a torta
+        if self.ntb_evo_graph_canvas is not None:
+            reached_for_chart = cap_pr if is_reached else hypothetical
+            self._draw_pie_on_canvas(self.ntb_evo_graph_canvas, cap_pr, reached_for_chart)
+
+        # Info labels
+        tk.Label(
+            self.ntb_evo_info_frame,
+            text=f"Cifra obiettivo: {self._format_money_it(cap_pr)}\nGiorni effettivi obiettivo: {dtns:.0f} giorni",
+            font=FONT_TABLE, bg=BG_TABLE, fg=FG, justify="left",
+        ).pack(anchor="w", pady=(10, 0))
+
+        if mtns < 0:
+            mtns_color = FG_SOMMA
+            mtns_text = f"Cifra mancante/esubero: {self._format_money_it(abs(mtns), prefix='EUR +')}"
+        elif mtns > 0:
+            mtns_color = FG_NEGATIVE
+            mtns_text = f"Cifra mancante/esubero: {self._format_money_it(mtns, prefix='EUR -')}"
+        else:
+            mtns_color = FG
+            mtns_text = "Cifra mancante/esubero: EUR 0,00"
+
+        tk.Label(
+            self.ntb_evo_info_frame,
+            text=mtns_text, font=FONT_TABLE, bg=BG_TABLE, fg=mtns_color, justify="left",
+        ).pack(anchor="w", pady=(5, 0))
+
+        if is_reached:
+            days_text  = "Giorni all'obiettivo: RAGGIUNTO ✓"
+            days_color = FG_SOMMA
+        else:
+            days_text  = f"Giorni all'obiettivo: {float(mdtns):.0f} giorni" if mdtns is not None else "Giorni all'obiettivo: N/D"
+            days_color = FG
+
+        tk.Label(
+            self.ntb_evo_info_frame,
+            text=days_text, font=FONT_TABLE, bg=BG_TABLE, fg=days_color, justify="left",
+        ).pack(anchor="w", pady=(5, 0))
+
+        if not is_reached and target_date is not None:
+            target_str = target_date.strftime("%d/%m/%Y") if hasattr(target_date, "strftime") else str(target_date)
+            tk.Label(
+                self.ntb_evo_info_frame,
+                text=f"Giorno raggiungimento obiettivo: {target_str}",
+                font=FONT_TABLE, bg=BG_TABLE, fg=FG_HEADER, justify="left",
+            ).pack(anchor="w", pady=(5, 0))
+
+    # ── Next to be – Attuali vivi ───────────────────────────────
+
+    def _build_ntb_attuali_vivi(self, parent: tk.Frame, extra: float):
+        bondora  = self._get_current_platform_amount("Bondora")
+        mintos   = self._get_current_platform_amount("Mintos")
+        relender = self._get_current_platform_amount(
+            "ReLender", aliases=["Re Lender", "Re-Lender", "Relender"],
+        )
+
+        bondora_hyp = bondora + extra
+        bm_total    = bondora_hyp + mintos
+        bmr_total   = bm_total + relender
+
+        content = tk.Frame(parent, bg=BG_TABLE)
+        content.pack(fill="both", expand=True)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_columnconfigure(1, weight=0, minsize=300)
+        content.grid_rowconfigure(0, weight=1)
+
+        left_col  = tk.Frame(content, bg=BG_TABLE)
+        left_col.grid(row=0, column=0, sticky="nsew")
+        right_col = tk.Frame(content, bg=BG_TABLE)
+        right_col.grid(row=0, column=1, sticky="ne", padx=(12, 0))
+
+        # Card cumulativo 1
+        card1 = tk.Frame(left_col, bg=BG_FRAME, padx=16, pady=12)
+        card1.pack(anchor="w", fill="x", pady=(0, 8))
+        tk.Label(card1, text="Bondora + Mintos", font=FONT_TAB, bg=BG_FRAME, fg=FG).pack(anchor="w")
+        tk.Label(
+            card1, text=self._format_money_it(bm_total),
+            font=("Segoe UI", 16, "bold"), bg=BG_FRAME, fg=FG_SOMMA,
+        ).pack(anchor="w", pady=(6, 0))
+
+        # Card cumulativo 2
+        card2 = tk.Frame(left_col, bg=BG_FRAME, padx=16, pady=12)
+        card2.pack(anchor="w", fill="x")
+        tk.Label(card2, text="Bondora + Mintos + ReLender", font=FONT_TAB, bg=BG_FRAME, fg=FG).pack(anchor="w")
+        tk.Label(
+            card2, text=self._format_money_it(bmr_total),
+            font=("Segoe UI", 16, "bold"), bg=BG_FRAME, fg=FG_SOMMA,
+        ).pack(anchor="w", pady=(6, 0))
+
+        # Dettaglio piattaforme
+        detail = tk.Frame(right_col, bg=BG_FRAME, padx=16, pady=12)
+        detail.pack(anchor="n", fill="x")
+        tk.Label(detail, text="Dettaglio piattaforme", font=FONT_TAB, bg=BG_FRAME, fg=FG_HEADER).pack(anchor="w", pady=(0, 8))
+
+        platform_rows = [
+            (f"Bondora (+{self._format_money_it(extra)})", bondora_hyp),
+            ("Mintos", mintos),
+            ("ReLender", relender),
+        ]
+        for i, (label, value) in enumerate(platform_rows):
+            row_frame = tk.Frame(detail, bg=BG_FRAME)
+            row_frame.pack(fill="x", pady=(0 if i == 0 else 4, 0))
+            tk.Label(row_frame, text=label, font=FONT_TABLE, bg=BG_FRAME, fg=FG).pack(side="left")
+            tk.Label(
+                row_frame, text=self._format_money_it(value),
+                font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA,
+            ).pack(side="right")
 
 
 def main():
