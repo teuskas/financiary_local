@@ -214,6 +214,25 @@ class App(tk.Tk):
         self.lbl_header = tk.Label(hdr, text=f"Own Finance  —  Riepilogo {self.current_year_sheet}",
                  font=FONT_TITLE, bg=BG, fg=FG_HEADER)
         self.lbl_header.pack(side="left")
+        
+        # Pulsante Aggiorna sempre visibile
+        btn_refresh = tk.Button(
+            hdr,
+            text="🔄 Aggiorna",
+            font=FONT_SMALL,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self._refresh_all_data,
+        )
+        btn_refresh.pack(side="right", padx=(0, 10))
+        
         self.lbl_update = tk.Label(hdr, text="Caricamento dati…",
                                    font=FONT_SMALL, bg=BG, fg=FG)
         self.lbl_update.pack(side="right")
@@ -1002,6 +1021,12 @@ class App(tk.Tk):
 
     def _set_status(self, msg: str):
         self.after(0, lambda: self.lbl_status.config(text=msg))
+
+    def _refresh_all_data(self):
+        """Invalida la cache e ricarica i dati da Dropbox in background."""
+        invalidate_cache()
+        self._set_status("Aggiornamento dati in corso…")
+        threading.Thread(target=self._load_data, daemon=True).start()
 
     def _go_to_gt_anno(self):
         if self.gt_window is not None and self.gt_window.winfo_exists():
