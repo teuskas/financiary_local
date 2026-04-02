@@ -215,19 +215,19 @@ class App(tk.Tk):
                  font=FONT_TITLE, bg=BG, fg=FG_HEADER)
         self.lbl_header.pack(side="left")
         
-        # Pulsante Aggiorna sempre visibile
+        # Pulsante Aggiorna con stile dei tab
         btn_refresh = tk.Button(
             hdr,
             text="🔄 Aggiorna",
-            font=FONT_SMALL,
-            fg=FG_HEADER,
+            font=FONT_TAB,
+            fg=FG,
             bg=BG_FRAME,
             activeforeground=FG_HEADER,
             activebackground=SEL_BG,
             relief="flat",
             bd=0,
-            padx=10,
-            pady=4,
+            padx=14,
+            pady=6,
             cursor="hand2",
             command=self._refresh_all_data,
         )
