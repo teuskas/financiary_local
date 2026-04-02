@@ -20,6 +20,7 @@ from parser_2026 import (get_tables, get_fixed_platform_goals, get_gt_anno_data,
                          get_bondo_evo_daily_values, get_gpp_anno_data,
                          get_total_monthly_comparison_data, get_monthly_comparison_total,
                          get_monthly_comparison_chart_points,
+                         get_bondo_evo_selectable_targets,
                          detect_current_year_sheet, invalidate_cache, MESI,
                          MONTHLY_COMPARISON_SCOPES)
 from numbers import Real
@@ -1313,15 +1314,19 @@ class App(tk.Tk):
     def _init_bondo_evo_filters(self):
         """Carica i valori giornalieri di Bondora nel menu a tendina."""
         if not self.bondo_evo_data:
+            self.bondo_evo_daily_var.set("")
+            if self.bondo_evo_daily_cb is not None:
+                self.bondo_evo_daily_cb["values"] = []
             return
 
-        sorted_values = list(self.bondo_evo_data.keys())
+        sorted_values = get_bondo_evo_selectable_targets(self.bondo_evo_data)
         sorted_display = [self._format_money_it(val, prefix="€") for val in sorted_values]
 
         if self.bondo_evo_daily_cb is not None:
             self.bondo_evo_daily_cb["values"] = sorted_display
 
-        if sorted_display and not self.bondo_evo_daily_var.get():
+        current_value = self.bondo_evo_daily_var.get()
+        if sorted_display and current_value not in sorted_display:
             self.bondo_evo_daily_var.set(sorted_display[0])
 
     def _draw_pie_on_canvas(self, canvas: tk.Canvas, cap_pr: float, reached: float):

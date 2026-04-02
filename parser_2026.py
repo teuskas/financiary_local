@@ -647,6 +647,36 @@ def compute_bondo_evo_target_dates(data: dict[float, dict], base_datetime: datet
     return enriched
 
 
+def get_bondo_evo_selectable_targets(data: dict[float, dict]) -> list[float]:
+    """Restituisce i target selezionabili per Bondora Evolution.
+
+    Regola UI richiesta:
+    - mostra solo il target piu' alto gia' raggiunto
+    - mostra tutti i target ancora non raggiunti
+    """
+    if not data:
+        return []
+
+    ordered_values = sorted(float(v) for v in data.keys())
+    reached_values = [
+        value for value in ordered_values
+        if bool((data.get(value) or {}).get("is_reached", False))
+    ]
+    max_reached = max(reached_values) if reached_values else None
+
+    selectable: list[float] = []
+    for value in ordered_values:
+        row = data.get(value) or {}
+        is_reached = bool(row.get("is_reached", False))
+        if is_reached:
+            if max_reached is not None and value == max_reached:
+                selectable.append(value)
+        else:
+            selectable.append(value)
+
+    return selectable
+
+
 def get_gpp_anno_data(dbx: dropbox.Dropbox) -> dict[str, object]:
     """
     Legge il foglio GPP_ANNO.

@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 
-from parser_2026 import compute_bondo_evo_target_dates
+from parser_2026 import compute_bondo_evo_target_dates, get_bondo_evo_selectable_targets
 
 
 class BondoraEvolutionDatesTest(unittest.TestCase):
@@ -36,6 +36,31 @@ class BondoraEvolutionDatesTest(unittest.TestCase):
         self.assertFalse(enriched[0.50]["is_reached"])
         self.assertIsNone(enriched[0.50]["target_date"])
         self.assertEqual(enriched[0.51]["target_date"], (base_dt + timedelta(days=20)).date())
+
+    def test_selectable_targets_include_only_max_reached_and_unreached(self):
+        data = {
+            0.40: {"is_reached": True},
+            0.41: {"is_reached": True},
+            0.42: {"is_reached": False},
+            0.43: {"is_reached": False},
+        }
+
+        selectable = get_bondo_evo_selectable_targets(data)
+
+        self.assertEqual(selectable, [0.41, 0.42, 0.43])
+
+    def test_selectable_targets_fallback_when_no_reached_or_all_reached(self):
+        none_reached = {
+            0.50: {"is_reached": False},
+            0.51: {"is_reached": False},
+        }
+        all_reached = {
+            0.60: {"is_reached": True},
+            0.61: {"is_reached": True},
+        }
+
+        self.assertEqual(get_bondo_evo_selectable_targets(none_reached), [0.50, 0.51])
+        self.assertEqual(get_bondo_evo_selectable_targets(all_reached), [0.61])
 
 
 if __name__ == "__main__":
