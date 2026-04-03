@@ -426,11 +426,22 @@ class App(tk.Tk):
         for child in body.winfo_children():
             child.destroy()
 
+        # Aggiungi colonna TOTALE se non esiste
         cols = list(df.columns)
+        if "TOTALE" not in cols:
+            mesi_cols = [col for col in cols if col in MESI]
+            df = df.copy()
+            df["TOTALE"] = df[mesi_cols].apply(
+                lambda row: sum(float(self._safe_value(v)) for v in row), axis=1
+            )
+            cols = list(df.columns)
+
         numeric_cols = [col for col in cols if col != "Piattaforma"]
 
         for col_idx, col in enumerate(cols):
-            body.grid_columnconfigure(col_idx, minsize=160 if col == "Piattaforma" else 110, weight=0)
+            # Colonna TOTALE un po' più larga per stare bene
+            col_width = 160 if col == "Piattaforma" else (130 if col == "TOTALE" else 110)
+            body.grid_columnconfigure(col_idx, minsize=col_width, weight=0)
             tk.Label(
                 body,
                 text=col,
@@ -467,6 +478,15 @@ class App(tk.Tk):
 
         body.update_idletasks()
         canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _safe_value(self, value) -> float:
+        """Converte un valore a float in modo sicuro, ritorna 0.0 se fallisce."""
+        try:
+            if pd.isna(value) or value == "":
+                return 0.0
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
 
     def _build_statusbar(self):
         bar = tk.Frame(self, bg=BG_FRAME, height=24)
