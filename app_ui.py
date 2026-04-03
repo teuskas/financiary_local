@@ -482,7 +482,7 @@ class App(tk.Tk):
     def _safe_value(self, value) -> float:
         """Converte un valore a float in modo sicuro, ritorna 0.0 se fallisce."""
         try:
-            if pd.isna(value) or value == "":
+            if value is None or value == "":
                 return 0.0
             return float(value)
         except (ValueError, TypeError):
