@@ -613,6 +613,83 @@ def get_tables(dbx: dropbox.Dropbox, sheet_anno: str) -> dict[str, pd.DataFrame]
     }
 
 
+def _extract_main_tables_from_raw(df_raw: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    return {
+        "investimenti": _extract_table(df_raw, TITOLI["investimenti"]),
+        "guadagni": _extract_table(df_raw, TITOLI["guadagni"]),
+        "inv_guad": _extract_table(df_raw, TITOLI["inv_guad"]),
+    }
+
+
+def _has_gains_for_core_platforms(guadagni_df: pd.DataFrame) -> bool:
+    if guadagni_df is None or guadagni_df.empty or "Piattaforma" not in guadagni_df.columns:
+        return False
+
+    target_aliases = {
+        "bondora",
+        "mintos",
+        "relender",
+    }
+    month_cols = [col for col in MESI if col in guadagni_df.columns]
+    if not month_cols:
+        return False
+
+    for _, row in guadagni_df.iterrows():
+        norm_platform = _normalize_platform_key(row.get("Piattaforma", ""))
+        if norm_platform not in target_aliases:
+            continue
+        for month in month_cols:
+            if abs(float(_safe_float(row.get(month, 0.0)))) > 1e-9:
+                return True
+
+    return False
+
+
+def get_yearly_main_tables_data(dbx: dropbox.Dropbox, current_year_sheet: str) -> dict[str, object]:
+    """Restituisce anni selezionabili e tabelle tab principali per anno.
+
+    Fonti:
+    - storico: file ARCHIVIO INV (tutti i fogli anno validi)
+    - corrente: NEW TOTAL INV (foglio anno corrente, che sovrascrive eventuale stesso anno in archivio)
+
+    Include solo gli anni con almeno un guadagno != 0 su Bondora/Mintos/ReLender.
+    """
+    merged_sources: dict[str, bytes] = {}
+
+    archive_path = _find_archive_file_path(dbx)
+    if archive_path:
+        try:
+            archive_content = _download_file(dbx, archive_path)
+            for year in _extract_year_sheets_from_content(archive_content):
+                merged_sources[year] = archive_content
+        except Exception:
+            pass
+
+    current_content = _download_file(dbx, FILE_PATH)
+    merged_sources[str(current_year_sheet)] = current_content
+
+    tables_by_year: dict[str, dict[str, pd.DataFrame]] = {}
+    for year in sorted(merged_sources.keys(), key=int):
+        content = merged_sources[year]
+        try:
+            df_raw = _load_raw_from_content(content, year)
+            tables = _extract_main_tables_from_raw(df_raw)
+            if not _has_gains_for_core_platforms(tables.get("guadagni")):
+                continue
+            tables_by_year[year] = tables
+        except Exception:
+            continue
+
+    years = sorted(tables_by_year.keys(), key=int)
+    default_year = str(current_year_sheet) if str(current_year_sheet) in tables_by_year else (years[-1] if years else "")
+
+    return {
+        "years": years,
+        "default_year": default_year,
+        "tables_by_year": tables_by_year,
+    }
+
+
 def compute_bondo_evo_target_dates(data: dict[float, dict], base_datetime: datetime | None = None) -> dict[float, dict]:
     """
     Calcola in modo cumulativo la data di raggiungimento per i target non ancora raggiunti.

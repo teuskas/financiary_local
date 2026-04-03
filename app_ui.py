@@ -21,6 +21,7 @@ from parser_2026 import (get_tables, get_fixed_platform_goals, get_gt_anno_data,
                          get_total_monthly_comparison_data, get_monthly_comparison_total,
                          get_monthly_comparison_chart_points,
                          get_bondo_evo_selectable_targets,
+                         get_yearly_main_tables_data,
                          detect_current_year_sheet, invalidate_cache, MESI,
                          MONTHLY_COMPARISON_SCOPES)
 from numbers import Real
@@ -60,6 +61,8 @@ TAB_LABELS = {
     "next_to_be":   "🎯  Next to be",
 }
 
+MAIN_TABLE_KEYS = ("investimenti", "guadagni", "inv_guad")
+
 
 def _resource_path(relative_path: str) -> str:
     """Restituisce il path risolto sia in dev che dentro bundle PyInstaller."""
@@ -88,6 +91,10 @@ class App(tk.Tk):
         self.graph_empty_var = tk.StringVar(value="In attesa dei dati...")
         self.table_views: dict[str, dict[str, tk.Widget]] = {}
         self.tables: dict = {}
+        self.tables_by_year: dict[str, dict] = {}
+        self.main_tab_years: list[str] = []
+        self.main_year_var = tk.StringVar()
+        self.main_year_cbs: dict[str, ttk.Combobox] = {}
         self.platform_goals: dict[str, float] = {}
 
         self.gt_year_var = tk.StringVar()
@@ -274,11 +281,26 @@ class App(tk.Tk):
             elif key == "next_to_be":
                 self._build_next_to_be_tab(frame)
             else:
-                self.table_views[key] = self._build_data_table(frame)
+                self.table_views[key] = self._build_data_table(frame, key)
 
-    def _build_data_table(self, parent: tk.Frame) -> dict[str, tk.Widget]:
+    def _build_data_table(self, parent: tk.Frame, table_key: str) -> dict[str, tk.Widget]:
         frame = tk.Frame(parent, bg=BG_TABLE)
         frame.pack(fill="both", expand=True, padx=8, pady=8)
+
+        if table_key in MAIN_TABLE_KEYS:
+            controls = tk.Frame(frame, bg=BG_TABLE)
+            controls.pack(fill="x", pady=(0, 8))
+            tk.Label(controls, text="Anno", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+            year_cb = ttk.Combobox(
+                controls,
+                textvariable=self.main_year_var,
+                state="readonly",
+                width=12,
+                values=[],
+            )
+            year_cb.pack(side="left", padx=(8, 0))
+            year_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_main_year_change())
+            self.main_year_cbs[table_key] = year_cb
 
         canvas = tk.Canvas(frame, bg=BG_TABLE, highlightthickness=0)
         vsb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
@@ -305,6 +327,39 @@ class App(tk.Tk):
         canvas.bind("<Configure>", _sync_width)
 
         return {"frame": frame, "canvas": canvas, "body": body}
+
+    def _init_main_year_filters(self):
+        options = list(self.main_tab_years)
+        for cb in self.main_year_cbs.values():
+            cb["values"] = options
+
+        preferred = self.current_year_sheet if self.current_year_sheet in options else (options[-1] if options else "")
+        if preferred and self.main_year_var.get() not in options:
+            self.main_year_var.set(preferred)
+
+    def _get_selected_main_year(self) -> str:
+        selected = self.main_year_var.get().strip()
+        if selected in self.tables_by_year:
+            return selected
+        if self.current_year_sheet in self.tables_by_year:
+            return self.current_year_sheet
+        return self.main_tab_years[-1] if self.main_tab_years else ""
+
+    def _refresh_main_tables_for_year(self):
+        selected_year = self._get_selected_main_year()
+        year_tables = self.tables_by_year.get(selected_year, {})
+        if not isinstance(year_tables, dict):
+            return
+
+        for key in MAIN_TABLE_KEYS:
+            view = self.table_views.get(key)
+            df = year_tables.get(key)
+            if view is None or df is None:
+                continue
+            self._populate_data_table(view, df)
+
+    def _on_main_year_change(self):
+        self._refresh_main_tables_for_year()
 
     def _is_numeric_value(self, value) -> bool:
         return isinstance(value, Real) and not isinstance(value, bool)
@@ -868,6 +923,7 @@ class App(tk.Tk):
             bondo_evo_data = get_bondo_evo_daily_values(dbx)
             gpp_data = get_gpp_anno_data(dbx)
             ctm_data = get_total_monthly_comparison_data(dbx)
+            yearly_main_tables = get_yearly_main_tables_data(dbx, sheet_anno)
             self.after(0, lambda: self._populate_all(
                 tables,
                 goals,
@@ -875,6 +931,7 @@ class App(tk.Tk):
                 bondo_evo_data,
                 gpp_data,
                 ctm_data,
+                yearly_main_tables,
                 sheet_anno,
             ))
             self._set_status("Dati caricati con successo.")
@@ -885,6 +942,7 @@ class App(tk.Tk):
     def _populate_all(self, tables: dict, goals: dict[str, float], gt_anno: dict[str, object],
                       bondo_evo_data: dict[float, dict[str, object]], gpp_data: dict[str, object],
                       ctm_data: dict[str, object],
+                      yearly_main_tables: dict[str, object],
                       sheet_anno: str):
         self.tables = tables
         self.platform_goals = goals
@@ -892,14 +950,31 @@ class App(tk.Tk):
         self.bondo_evo_data = bondo_evo_data
         self.gpp_data = gpp_data
         self.ctm_data = ctm_data
+        self.tables_by_year = {
+            str(year): year_tables
+            for year, year_tables in (yearly_main_tables.get("tables_by_year", {}) if isinstance(yearly_main_tables, dict) else {}).items()
+            if isinstance(year_tables, dict)
+        }
+        self.main_tab_years = [
+            str(year) for year in (yearly_main_tables.get("years", []) if isinstance(yearly_main_tables, dict) else [])
+            if str(year) in self.tables_by_year
+        ]
+        if not self.main_tab_years:
+            self.tables_by_year = {sheet_anno: tables}
+            self.main_tab_years = [sheet_anno]
+        if sheet_anno not in self.tables_by_year:
+            self.tables_by_year[sheet_anno] = tables
+            if sheet_anno not in self.main_tab_years:
+                self.main_tab_years.append(sheet_anno)
+                self.main_tab_years.sort(key=int)
         self.current_year_sheet = sheet_anno
 
         # Aggiorna titolo finestra e header con l'anno rilevato
         self.title(f"Own Finance – {sheet_anno}")
         self.lbl_header.config(text=f"Own Finance  —  Riepilogo {sheet_anno}")
 
-        for key, df in tables.items():
-            self._populate_data_table(self.table_views[key], df)
+        self._init_main_year_filters()
+        self._refresh_main_tables_for_year()
         self._init_graph_filters()
         self._refresh_graph()
         self._init_gt_anno_filters()
@@ -908,6 +983,11 @@ class App(tk.Tk):
         self._refresh_bondo_evo_display()
         self._refresh_live_investments_tab()
         self._refresh_ntb_display()
+        if self.ctm_window is not None and self.ctm_window.winfo_exists():
+            self._render_ctm_table()
+        if self.ctm_graph_window is not None and self.ctm_graph_window.winfo_exists():
+            self._init_ctm_graph_filters()
+            self._render_ctm_graph()
         ts = datetime.now().strftime("%d/%m/%Y %H:%M")
         self.lbl_update.config(text=f"Aggiornato: {ts}")
 
