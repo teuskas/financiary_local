@@ -1651,6 +1651,8 @@ class App(tk.Tk):
         if current_amount <= 0.0 and daily_rate <= 0.0:
             return 0.0, 0.0, 0.0, "Dati Bondora non sufficienti per la previsione."
 
+        current_daily_rate = daily_rate
+
         forecast = current_amount
 
         events: list[tuple[date, float]] = []
@@ -1673,7 +1675,8 @@ class App(tk.Tk):
 
         projected_gain = max(0.0, forecast - current_amount)
         hint = (
-            f"Daily iniziale: {self._format_money_it(daily_rate, prefix='EUR/giorno')}\n"
+            f"Guadagno giornaliero attuale: {self._format_money_it(current_daily_rate, prefix='EUR/giorno')}\n"
+            f"Guadagno giornaliero previsionale: {self._format_money_it(daily_rate, prefix='EUR/giorno')}\n"
             f"Guadagno previsionale anno: {self._format_money_it(current_amount)} + "
             f"{self._format_money_it(projected_gain)} = {self._format_money_it(forecast)}"
         )
