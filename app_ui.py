@@ -21,6 +21,7 @@ from parser_2026 import (get_tables, get_fixed_platform_goals, get_gt_anno_data,
                          get_total_monthly_comparison_data, get_monthly_comparison_total,
                          get_monthly_comparison_chart_points,
                          get_bondo_evo_selectable_targets,
+                         get_progressive_amount_targets,
                          get_yearly_main_tables_data,
                          detect_current_year_sheet, invalidate_cache, MESI,
                          MONTHLY_COMPARISON_SCOPES)
@@ -164,7 +165,10 @@ class App(tk.Tk):
         # Previsionale
         self.pv_window: tk.Toplevel | None = None
         self.pv_platform_var = tk.StringVar()
+        self.pv_step_var = tk.StringVar()
         self.pv_platform_cb: ttk.Combobox | None = None
+        self.pv_step_label: tk.Label | None = None
+        self.pv_step_cb: ttk.Combobox | None = None
         self.pv_title_var = tk.StringVar(value="")
         self.pv_result_var = tk.StringVar(value="Seleziona una piattaforma per calcolare il previsionale.")
         self.pv_hint_var = tk.StringVar(value="")
@@ -426,15 +430,24 @@ class App(tk.Tk):
         for child in body.winfo_children():
             child.destroy()
 
+        df = df.copy()
+
         # Aggiungi colonna TOTALE se non esiste
         cols = list(df.columns)
         if "TOTALE" not in cols:
             mesi_cols = [col for col in cols if col in MESI]
-            df = df.copy()
             df["TOTALE"] = df[mesi_cols].apply(
                 lambda row: sum(float(self._safe_value(v)) for v in row), axis=1
             )
             cols = list(df.columns)
+
+        # Ultima cella: la SOMMA della colonna TOTALE deve riflettere sempre
+        # la somma dei totali di riga (escludendo la riga SOMMA stessa).
+        if "Piattaforma" in cols and "TOTALE" in cols:
+            is_sum_row = df["Piattaforma"].astype(str).str.strip().str.upper() == "SOMMA"
+            grand_total = df.loc[~is_sum_row, "TOTALE"].apply(self._safe_value).sum()
+            if is_sum_row.any():
+                df.loc[is_sum_row, "TOTALE"] = grand_total
 
         numeric_cols = [col for col in cols if col != "Piattaforma"]
 
@@ -1630,6 +1643,8 @@ class App(tk.Tk):
             self.pv_window.destroy()
         self.pv_window = None
         self.pv_platform_cb = None
+        self.pv_step_label = None
+        self.pv_step_cb = None
         self._refocus_main()
 
     def _build_pv_window(self, parent):
@@ -1673,6 +1688,16 @@ class App(tk.Tk):
         self.pv_platform_cb.pack(side="left", padx=(8, 0))
         self.pv_platform_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_pv_selection())
 
+        self.pv_step_label = tk.Label(controls, text="Step obiettivo", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER)
+        self.pv_step_cb = ttk.Combobox(
+            controls,
+            textvariable=self.pv_step_var,
+            state="readonly",
+            width=10,
+            values=[],
+        )
+        self.pv_step_cb.bind("<<ComboboxSelected>>", lambda _e: self._refresh_pv_selection())
+
         content = tk.Frame(wrapper, bg=BG_TABLE)
         content.pack(fill="both", expand=True, pady=(16, 0))
 
@@ -1707,8 +1732,72 @@ class App(tk.Tk):
         values = ["Bondora", "Mintos", "Tutte"]
         if self.pv_platform_cb is not None:
             self.pv_platform_cb["values"] = values
+        if self.pv_step_cb is not None:
+            self.pv_step_cb["values"] = ["10 €", "50 €", "100 €", "1000 €"]
         if not self.pv_platform_var.get():
             self.pv_platform_var.set("Tutte")
+        if not self.pv_step_var.get():
+            self.pv_step_var.set("10 €")
+
+    def _get_pv_step_amount(self) -> float:
+        raw = self.pv_step_var.get().replace("€", "").strip()
+        value = self._parse_localized_number(raw)
+        if value is None or value <= 0:
+            return 10.0
+        return float(value)
+
+    def _calculate_bondora_progressive_targets(self, step: float, count: int = 5) -> list[dict[str, object]]:
+        """Calcola data e cifra stimata al raggiungimento dei prossimi target Bondora."""
+        current_amount, current_daily_rate = self._get_bondora_current_snapshot()
+        targets = get_progressive_amount_targets(current_amount, step, count)
+        if not targets or current_daily_rate <= 0:
+            return []
+
+        today = date.today()
+        amount = float(current_amount)
+        daily_rate = float(current_daily_rate)
+
+        events: list[tuple[date, float]] = []
+        for daily, row in self.bondo_evo_data.items():
+            if bool(row.get("is_reached", False)):
+                continue
+            target_date = row.get("target_date")
+            if isinstance(target_date, date) and target_date > today:
+                events.append((target_date, float(daily)))
+        events.sort(key=lambda x: (x[0], x[1]))
+
+        output: list[dict[str, object]] = []
+        next_idx = 0
+        event_idx = 0
+        current_day = today
+
+        max_sim_days = 36500  # margine ampio per trovare i target anche in scenari molto conservativi
+        for _ in range(max_sim_days):
+            current_day = current_day + timedelta(days=1)
+            while event_idx < len(events) and events[event_idx][0] <= current_day:
+                daily_rate = max(daily_rate, events[event_idx][1])
+                event_idx += 1
+
+            amount += daily_rate
+
+            while next_idx < len(targets) and amount >= targets[next_idx]:
+                output.append(
+                    {
+                        "target": targets[next_idx],
+                        "date": current_day,
+                        "amount": amount,
+                    }
+                )
+                next_idx += 1
+
+            if next_idx >= len(targets):
+                break
+
+        while next_idx < len(targets):
+            output.append({"target": targets[next_idx], "date": None, "amount": None})
+            next_idx += 1
+
+        return output
 
     def _get_bondora_current_snapshot(self) -> tuple[float, float]:
         """Restituisce (cifra_attuale, daily_rate_attuale) usando i dati Bondora Evolution."""
@@ -1819,6 +1908,18 @@ class App(tk.Tk):
             self.pv_hint_var.set("")
             return
 
+        if self.pv_step_label is not None and self.pv_step_cb is not None:
+            if platform == "Bondora":
+                if not self.pv_step_label.winfo_ismapped():
+                    self.pv_step_label.pack(side="left", padx=(18, 0))
+                if not self.pv_step_cb.winfo_ismapped():
+                    self.pv_step_cb.pack(side="left", padx=(8, 0))
+            else:
+                if self.pv_step_label.winfo_ismapped():
+                    self.pv_step_label.pack_forget()
+                if self.pv_step_cb.winfo_ismapped():
+                    self.pv_step_cb.pack_forget()
+
         bondora_forecast, bondora_current, bondora_projected, bondora_hint = self._calculate_bondora_forecast()
         mintos_forecast, mintos_current, mintos_projected, mintos_hint = self._calculate_mintos_forecast()
         year = datetime.now().year
@@ -1826,7 +1927,43 @@ class App(tk.Tk):
         if platform == "Bondora":
             self.pv_title_var.set(f"Previsionale Bondora a fine {year}")
             self.pv_result_var.set(self._format_money_it(bondora_forecast))
-            self.pv_hint_var.set(bondora_hint)
+            step_value = self._get_pv_step_amount()
+            targets = self._calculate_bondora_progressive_targets(step_value, count=5)
+
+            if targets:
+                first = targets[0]
+                first_date = first.get("date")
+                first_amount = first.get("amount")
+                if isinstance(first_date, date) and isinstance(first_amount, float):
+                    next_line = (
+                        f"Prossimo target ({int(step_value)} €): {self._format_money_it(float(first['target']))} - "
+                        f"{first_date.strftime('%d/%m/%Y')} (stima: {self._format_money_it(first_amount)})"
+                    )
+                else:
+                    next_line = (
+                        f"Prossimo target ({int(step_value)} €): {self._format_money_it(float(first['target']))} - "
+                        "data non stimabile"
+                    )
+
+                upcoming_lines = []
+                for idx, item in enumerate(targets[:4], start=1):
+                    target_value = self._format_money_it(float(item["target"]))
+                    item_date = item.get("date")
+                    item_amount = item.get("amount")
+                    if isinstance(item_date, date) and isinstance(item_amount, float):
+                        upcoming_lines.append(
+                            f"{idx}) {target_value} - {item_date.strftime('%d/%m/%Y')} (stima: {self._format_money_it(item_amount)})"
+                        )
+                    else:
+                        upcoming_lines.append(f"{idx}) {target_value} - data non stimabile")
+
+                targets_hint = (
+                    f"{next_line}\n"
+                    f"Previsionale prossimi 4 obiettivi:\n" + "\n".join(upcoming_lines)
+                )
+                self.pv_hint_var.set(f"{targets_hint}\n\n{bondora_hint}")
+            else:
+                self.pv_hint_var.set(bondora_hint)
         elif platform == "Mintos":
             self.pv_title_var.set(f"Previsionale Mintos a fine {year}")
             self.pv_result_var.set(self._format_money_it(mintos_forecast))

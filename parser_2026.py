@@ -5,6 +5,7 @@ e restituisce le tabelle come DataFrame pronti per la UI.
 """
 
 import io
+import math
 from datetime import datetime, timedelta
 import pandas as pd
 import dropbox
@@ -752,6 +753,18 @@ def get_bondo_evo_selectable_targets(data: dict[float, dict]) -> list[float]:
             selectable.append(value)
 
     return selectable
+
+
+def get_progressive_amount_targets(current_amount: float, step: float, count: int = 5) -> list[float]:
+    """Restituisce i target progressivi successivi in base allo step scelto.
+
+    Esempio: current=2782, step=10 -> [2790, 2800, 2810, 2820, 2830]
+    """
+    if count <= 0 or step <= 0:
+        return []
+
+    first_target = (math.floor(float(current_amount) / float(step)) + 1) * float(step)
+    return [round(first_target + i * float(step), 2) for i in range(count)]
 
 
 def get_gpp_anno_data(dbx: dropbox.Dropbox) -> dict[str, object]:
