@@ -68,8 +68,10 @@ class BondoraEvolutionDatesTest(unittest.TestCase):
 
     def test_progressive_amount_targets_examples(self):
         self.assertEqual(get_progressive_amount_targets(2782.0, 10.0), [2790.0, 2800.0, 2810.0, 2820.0, 2830.0])
+        self.assertEqual(get_progressive_amount_targets(2782.0, 25.0), [2800.0, 2825.0, 2850.0, 2875.0, 2900.0])
         self.assertEqual(get_progressive_amount_targets(2782.0, 50.0), [2800.0, 2850.0, 2900.0, 2950.0, 3000.0])
         self.assertEqual(get_progressive_amount_targets(2782.0, 100.0), [2800.0, 2900.0, 3000.0, 3100.0, 3200.0])
+        self.assertEqual(get_progressive_amount_targets(2782.0, 500.0), [3000.0, 3500.0, 4000.0, 4500.0, 5000.0])
         self.assertEqual(get_progressive_amount_targets(2782.0, 1000.0), [3000.0, 4000.0, 5000.0, 6000.0, 7000.0])
 
     def test_progressive_amount_targets_from_exact_multiple(self):

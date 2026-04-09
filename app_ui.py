@@ -1797,7 +1797,7 @@ class App(tk.Tk):
         if self.pv_platform_cb is not None:
             self.pv_platform_cb["values"] = values
         if self.pv_step_cb is not None:
-            self.pv_step_cb["values"] = ["10 €", "50 €", "100 €", "1000 €"]
+            self.pv_step_cb["values"] = ["10 €", "25 €", "50 €", "100 €", "500 €", "1000 €"]
         if not self.pv_platform_var.get():
             self.pv_platform_var.set("Tutte")
         if not self.pv_step_var.get():
