@@ -169,6 +169,7 @@ class App(tk.Tk):
         self.pv_platform_cb: ttk.Combobox | None = None
         self.pv_step_label: tk.Label | None = None
         self.pv_step_cb: ttk.Combobox | None = None
+        self.pv_targets_frame: tk.Frame | None = None
         self.pv_title_var = tk.StringVar(value="")
         self.pv_result_var = tk.StringVar(value="Seleziona una piattaforma per calcolare il previsionale.")
         self.pv_hint_var = tk.StringVar(value="")
@@ -1645,6 +1646,7 @@ class App(tk.Tk):
         self.pv_platform_cb = None
         self.pv_step_label = None
         self.pv_step_cb = None
+        self.pv_targets_frame = None
         self._refocus_main()
 
     def _build_pv_window(self, parent):
@@ -1719,6 +1721,9 @@ class App(tk.Tk):
             justify="left",
         ).pack(anchor="w", pady=(4, 0))
 
+        self.pv_targets_frame = tk.Frame(content, bg=BG_TABLE)
+        self.pv_targets_frame.pack(fill="x", pady=(8, 0))
+
         tk.Label(
             content,
             textvariable=self.pv_hint_var,
@@ -1727,6 +1732,65 @@ class App(tk.Tk):
             fg=FG,
             justify="left",
         ).pack(anchor="w", pady=(8, 0))
+
+    def _clear_pv_targets_rows(self):
+        if self.pv_targets_frame is None:
+            return
+        for child in self.pv_targets_frame.winfo_children():
+            child.destroy()
+
+    def _render_pv_targets_rows(self, targets: list[dict[str, object]], step_value: float):
+        self._clear_pv_targets_rows()
+        if self.pv_targets_frame is None or not targets:
+            return
+
+        tk.Label(
+            self.pv_targets_frame,
+            text=f"Obiettivi progressivi ({int(step_value)} €)",
+            font=("Segoe UI", 9, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 16), pady=(0, 4))
+
+        for idx, item in enumerate(targets, start=1):
+            target_value = self._format_money_it(float(item.get("target", 0.0)))
+            item_date = item.get("date")
+            item_amount = item.get("amount")
+            missing_days = item.get("missing_days")
+
+            if isinstance(item_date, date) and isinstance(item_amount, float):
+                left_text = f"{idx}) {target_value} - {item_date.strftime('%d/%m/%Y')} (stima: {self._format_money_it(item_amount)})"
+            else:
+                left_text = f"{idx}) {target_value} - data non stimabile"
+
+            row_frame = tk.Frame(self.pv_targets_frame, bg=BG_TABLE)
+            row_frame.grid(row=idx, column=0, sticky="w", pady=1)
+
+            tk.Label(
+                row_frame,
+                text=left_text,
+                font=FONT_SMALL,
+                bg=BG_TABLE,
+                fg=FG,
+                justify="left",
+            ).pack(side="left")
+
+            tk.Label(
+                row_frame,
+                text="    Giorni mancanti: ",
+                font=FONT_SMALL,
+                bg=BG_TABLE,
+                fg=FG,
+            ).pack(side="left")
+
+            days_text = str(int(missing_days)) if isinstance(missing_days, (int, float)) else "N/D"
+            tk.Label(
+                row_frame,
+                text=days_text,
+                font=("Segoe UI", 9, "bold"),
+                bg=BG_TABLE,
+                fg=FG_NEGATIVE,
+            ).pack(side="left")
 
     def _init_pv_filters(self):
         values = ["Bondora", "Mintos", "Tutte"]
@@ -1786,6 +1850,7 @@ class App(tk.Tk):
                         "target": targets[next_idx],
                         "date": current_day,
                         "amount": amount,
+                        "missing_days": (current_day - today).days,
                     }
                 )
                 next_idx += 1
@@ -1794,7 +1859,7 @@ class App(tk.Tk):
                 break
 
         while next_idx < len(targets):
-            output.append({"target": targets[next_idx], "date": None, "amount": None})
+            output.append({"target": targets[next_idx], "date": None, "amount": None, "missing_days": None})
             next_idx += 1
 
         return output
@@ -1903,6 +1968,7 @@ class App(tk.Tk):
     def _refresh_pv_selection(self):
         platform = self.pv_platform_var.get().strip()
         if not platform:
+            self._clear_pv_targets_rows()
             self.pv_title_var.set("")
             self.pv_result_var.set("Seleziona una piattaforma")
             self.pv_hint_var.set("")
@@ -1929,6 +1995,7 @@ class App(tk.Tk):
             self.pv_result_var.set(self._format_money_it(bondora_forecast))
             step_value = self._get_pv_step_amount()
             targets = self._calculate_bondora_progressive_targets(step_value, count=5)
+            self._render_pv_targets_rows(targets, step_value)
 
             if targets:
                 first = targets[0]
@@ -1961,10 +2028,11 @@ class App(tk.Tk):
                     f"{next_line}\n"
                     f"Previsionale prossimi 4 obiettivi:\n" + "\n".join(upcoming_lines)
                 )
-                self.pv_hint_var.set(f"{targets_hint}\n\n{bondora_hint}")
+                self.pv_hint_var.set(bondora_hint)
             else:
                 self.pv_hint_var.set(bondora_hint)
         elif platform == "Mintos":
+            self._clear_pv_targets_rows()
             self.pv_title_var.set(f"Previsionale Mintos a fine {year}")
             self.pv_result_var.set(self._format_money_it(mintos_forecast))
             self.pv_hint_var.set(
@@ -1972,6 +2040,7 @@ class App(tk.Tk):
                 f"{mintos_hint}"
             )
         else:
+            self._clear_pv_targets_rows()
             total = bondora_forecast + mintos_forecast
             total_current = bondora_current + mintos_current
             total_projected = bondora_projected + mintos_projected
