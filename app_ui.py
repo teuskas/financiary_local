@@ -1826,15 +1826,13 @@ class App(tk.Tk):
             ).pack(side="left")
 
             if show_detail_toggle:
-                toggle_var = tk.BooleanVar(value=self.pv_active_detail_index == idx)
-                ttk.Checkbutton(
+                is_on = self.pv_active_detail_index == idx
+                switch = self._create_pv_detail_switch(
                     row_frame,
-                    text="Dettaglio",
-                    variable=toggle_var,
-                    onvalue=True,
-                    offvalue=False,
-                    command=lambda i=idx, v=toggle_var: self._toggle_pv_detail(i, bool(v.get())),
-                ).grid(row=0, column=1, padx=(12, 0), sticky="e")
+                    is_on=is_on,
+                    on_toggle=lambda i=idx, state=(not is_on): self._toggle_pv_detail(i, state),
+                )
+                switch.grid(row=0, column=1, padx=(12, 0), sticky="e")
 
                 if self.pv_active_detail_index == idx:
                     detail_rows = item.get("euro_details") or []
@@ -1874,6 +1872,48 @@ class App(tk.Tk):
         elif self.pv_active_detail_index == row_index:
             self.pv_active_detail_index = None
         self._refresh_pv_selection()
+
+    def _create_pv_detail_switch(self, parent, *, is_on: bool, on_toggle):
+        """Crea un toggle switch grafico (non checkbox) per il dettaglio riga."""
+        holder = tk.Frame(parent, bg=BG_TABLE)
+        tk.Label(
+            holder,
+            text="Dettaglio",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+        ).pack(side="left", padx=(0, 6))
+
+        width, height = 40, 22
+        radius = 10
+        knob_d = 16
+        off_bg = "#4b5563"
+        on_bg = "#22c55e"
+        knob_color = "#f8fafc"
+
+        canvas = tk.Canvas(
+            holder,
+            width=width,
+            height=height,
+            bg=BG_TABLE,
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+            cursor="hand2",
+        )
+        canvas.pack(side="left")
+
+        fill_color = on_bg if is_on else off_bg
+        # Corpo pill (rettangolo + 2 estremita' arrotondate)
+        canvas.create_rectangle(radius, 1, width - radius, height - 1, fill=fill_color, outline=fill_color)
+        canvas.create_oval(1, 1, radius * 2, height - 1, fill=fill_color, outline=fill_color)
+        canvas.create_oval(width - radius * 2, 1, width - 1, height - 1, fill=fill_color, outline=fill_color)
+
+        knob_x = width - knob_d - 3 if is_on else 3
+        canvas.create_oval(knob_x, 3, knob_x + knob_d, 3 + knob_d, fill=knob_color, outline=knob_color)
+
+        canvas.bind("<Button-1>", lambda _e: on_toggle())
+        return holder
 
     def _init_pv_filters(self):
         values = ["Bondora", "Mintos", "Tutte"]
