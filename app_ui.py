@@ -1840,17 +1840,17 @@ class App(tk.Tk):
                         detail_text = "Dettaglio non disponibile."
                     else:
                         detail_lines = []
-                        for detail in detail_rows:
+                        for detail_idx, detail in enumerate(detail_rows, start=1):
                             euro_target = float(detail.get("target", 0.0))
                             euro_date = detail.get("date")
                             euro_amount = detail.get("amount")
                             if isinstance(euro_date, date) and isinstance(euro_amount, float):
                                 detail_lines.append(
-                                    f"- {self._format_money_it(euro_target)}: {self._format_date_with_weekday_it(euro_date)} "
+                                    f"{detail_idx}) {self._format_money_it(euro_target)}: {self._format_date_with_weekday_it(euro_date)} "
                                     f"(stima: {self._format_money_it(euro_amount)})"
                                 )
                             else:
-                                detail_lines.append(f"- {self._format_money_it(euro_target)}: data non stimabile")
+                                detail_lines.append(f"{detail_idx}) {self._format_money_it(euro_target)}: data non stimabile")
                         detail_text = "\n".join(detail_lines)
 
                     detail_frame = tk.Frame(self.pv_targets_frame, bg=BG_TABLE)
