@@ -1961,6 +1961,7 @@ class App(tk.Tk):
         next_euro_idx = 0
         event_idx = 0
         current_day = today
+        prev_row_target = float(current_amount)
 
         max_sim_days = 36500  # margine ampio per trovare i target anche in scenari molto conservativi
         for _ in range(max_sim_days):
@@ -1991,10 +1992,13 @@ class App(tk.Tk):
                         "amount": amount,
                         "missing_days": (current_day - today).days,
                         "euro_details": [
-                            hit for hit in euro_hits if float(hit.get("target", 0.0)) <= float(row_target)
+                            hit
+                            for hit in euro_hits
+                            if prev_row_target < float(hit.get("target", 0.0)) <= float(row_target)
                         ],
                     }
                 )
+                prev_row_target = float(row_target)
                 next_idx += 1
 
             if next_idx >= len(targets):
