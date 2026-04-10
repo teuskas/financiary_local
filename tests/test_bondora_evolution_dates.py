@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from parser_2026 import (
     compute_bondo_evo_target_dates,
+    get_euro_milestone_targets,
     get_bondo_evo_selectable_targets,
     get_progressive_amount_targets,
 )
@@ -76,6 +77,11 @@ class BondoraEvolutionDatesTest(unittest.TestCase):
 
     def test_progressive_amount_targets_from_exact_multiple(self):
         self.assertEqual(get_progressive_amount_targets(2800.0, 100.0, count=4), [2900.0, 3000.0, 3100.0, 3200.0])
+
+    def test_euro_milestone_targets(self):
+        self.assertEqual(get_euro_milestone_targets(2782.34, 2790.0), [2783.0, 2784.0, 2785.0, 2786.0, 2787.0, 2788.0, 2789.0, 2790.0])
+        self.assertEqual(get_euro_milestone_targets(2800.00, 2800.0), [])
+        self.assertEqual(get_euro_milestone_targets(2800.90, 2801.0), [2801.0])
 
 
 if __name__ == "__main__":

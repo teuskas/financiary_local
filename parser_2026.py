@@ -767,6 +767,24 @@ def get_progressive_amount_targets(current_amount: float, step: float, count: in
     return [round(first_target + i * float(step), 2) for i in range(count)]
 
 
+def get_euro_milestone_targets(current_amount: float, target_amount: float) -> list[float]:
+    """Restituisce ogni soglia intera in euro tra cifra attuale e target.
+
+    Esempio: current=2782.34, target=2790 -> [2783.0, ..., 2790.0]
+    """
+    current = float(current_amount)
+    target = float(target_amount)
+    if target <= current:
+        return []
+
+    first_euro = int(math.floor(current)) + 1
+    last_euro = int(math.floor(target))
+    if last_euro < first_euro:
+        return []
+
+    return [float(value) for value in range(first_euro, last_euro + 1)]
+
+
 def get_gpp_anno_data(dbx: dropbox.Dropbox) -> dict[str, object]:
     """
     Legge il foglio GPP_ANNO.
