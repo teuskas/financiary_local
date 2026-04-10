@@ -65,6 +65,16 @@ TAB_LABELS = {
 
 MAIN_TABLE_KEYS = ("investimenti", "guadagni", "inv_guad")
 
+GIORNI_SETTIMANA_IT = [
+    "Lunedi",
+    "Martedi",
+    "Mercoledi",
+    "Giovedi",
+    "Venerdi",
+    "Sabato",
+    "Domenica",
+]
+
 
 def _resource_path(relative_path: str) -> str:
     """Restituisce il path risolto sia in dev che dentro bundle PyInstaller."""
@@ -384,6 +394,10 @@ class App(tk.Tk):
 
     def _format_money_it(self, value: float, prefix: str = "EUR") -> str:
         return f"{prefix} {self._format_number_it(value, 2)}"
+
+    def _format_date_with_weekday_it(self, value: date) -> str:
+        weekday_it = GIORNI_SETTIMANA_IT[value.weekday()]
+        return f"{value.strftime('%d/%m/%Y')} ({weekday_it})"
 
     def _format_signed_number_it(self, value: float, decimals: int = 2) -> str:
         sign = "+" if value >= 0 else ""
@@ -1770,7 +1784,10 @@ class App(tk.Tk):
             missing_days = item.get("missing_days")
 
             if isinstance(item_date, date) and isinstance(item_amount, float):
-                left_text = f"{idx + 1}) {target_value} - {item_date.strftime('%d/%m/%Y')} (stima: {self._format_money_it(item_amount)})"
+                left_text = (
+                    f"{idx + 1}) {target_value} - {self._format_date_with_weekday_it(item_date)} "
+                    f"(stima: {self._format_money_it(item_amount)})"
+                )
             else:
                 left_text = f"{idx + 1}) {target_value} - data non stimabile"
 
@@ -1810,20 +1827,12 @@ class App(tk.Tk):
 
             if show_detail_toggle:
                 toggle_var = tk.BooleanVar(value=self.pv_active_detail_index == idx)
-                tk.Checkbutton(
+                ttk.Checkbutton(
                     row_frame,
                     text="Dettaglio",
                     variable=toggle_var,
                     onvalue=True,
                     offvalue=False,
-                    indicatoron=False,
-                    bg=BG_FRAME,
-                    fg=FG,
-                    activebackground=SEL_BG,
-                    activeforeground=FG_HEADER,
-                    selectcolor=SEL_BG,
-                    relief="flat",
-                    padx=8,
                     command=lambda i=idx, v=toggle_var: self._toggle_pv_detail(i, bool(v.get())),
                 ).grid(row=0, column=1, padx=(12, 0), sticky="e")
 
@@ -1839,7 +1848,7 @@ class App(tk.Tk):
                             euro_amount = detail.get("amount")
                             if isinstance(euro_date, date) and isinstance(euro_amount, float):
                                 detail_lines.append(
-                                    f"- {self._format_money_it(euro_target)}: {euro_date.strftime('%d/%m/%Y')} "
+                                    f"- {self._format_money_it(euro_target)}: {self._format_date_with_weekday_it(euro_date)} "
                                     f"(stima: {self._format_money_it(euro_amount)})"
                                 )
                             else:
