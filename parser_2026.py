@@ -47,6 +47,11 @@ _FIXED_PLATFORM_ROWS = [36, 37]  # indici zero-based
 _PLATFORM_COL = 4
 _GOAL_COL = 6
 
+# Fin - Inv: debiti da celle fisse del foglio annuale
+_FIN_HOME_ROW = 43  # D44 -> index 43 (zero-based)
+_FIN_CAR_ROW = 45   # D46 -> index 45 (zero-based)
+_FIN_VALUE_COL = 3  # colonna D -> index 3
+
 # Cache del contenuto grezzo dei file per evitare download multipli
 _file_cache: dict[str, bytes] = {}
 
@@ -597,6 +602,20 @@ def get_fixed_platform_goals(dbx: dropbox.Dropbox, sheet_anno: str) -> dict[str,
         goals[platform] = _safe_float(goal_cell)
 
     return goals
+
+
+def get_fin_inv_debts(dbx: dropbox.Dropbox, sheet_anno: str) -> dict[str, float]:
+    """Legge i debiti Fin casa / Fin car dal foglio annuale (celle D44 e D46)."""
+    df_raw = _load_raw(dbx, sheet_anno)
+
+    fin_home = _safe_float(df_raw.iloc[_FIN_HOME_ROW, _FIN_VALUE_COL]) if _FIN_HOME_ROW < len(df_raw) else 0.0
+    fin_car = _safe_float(df_raw.iloc[_FIN_CAR_ROW, _FIN_VALUE_COL]) if _FIN_CAR_ROW < len(df_raw) else 0.0
+
+    return {
+        "fin_home": fin_home,
+        "fin_car": fin_car,
+        "total": round(fin_home + fin_car, 2),
+    }
 
 
 def get_tables(dbx: dropbox.Dropbox, sheet_anno: str) -> dict[str, pd.DataFrame]:

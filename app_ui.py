@@ -23,7 +23,7 @@ from parser_2026 import (get_tables, get_fixed_platform_goals, get_gt_anno_data,
                          get_bondo_evo_selectable_targets,
                          get_euro_milestone_targets,
                          get_progressive_amount_targets,
-                         get_yearly_main_tables_data,
+                         get_yearly_main_tables_data, get_fin_inv_debts,
                          detect_current_year_sheet, invalidate_cache, MESI,
                          MONTHLY_COMPARISON_SCOPES)
 from numbers import Real
@@ -61,6 +61,7 @@ TAB_LABELS = {
     "bondora_evolution": "🧬  Bondora Evolution",
     "investimenti_attuali_vivi": "💵  Now Alive",
     "next_to_be":   "🎯  Next to be",
+    "fin_inv":      "🧾  Fin - Inv",
 }
 
 MAIN_TABLE_KEYS = ("investimenti", "guadagni", "inv_guad")
@@ -202,6 +203,21 @@ class App(tk.Tk):
         self.ntb_evo_info_frame: tk.Frame | None = None
         self._ntb_virtual_evo_data: dict = {}
 
+        # Fin - Inv tab
+        self.fin_inv_type_var = tk.StringVar(value="Fhome + Fcar")
+        self.fin_inv_scope_var = tk.StringVar(value="Ready To Redeem")
+        self.fin_inv_directa_input_var = tk.StringVar(value="0")
+        self.fin_inv_debts: dict[str, float] = {"fin_home": 0.0, "fin_car": 0.0, "total": 0.0}
+        self.fin_inv_debt_value_var = tk.StringVar(value="EUR --")
+        self.fin_inv_diff_value_var = tk.StringVar(value="EUR --")
+        self.fin_inv_total_inv_title_var = tk.StringVar(value="Totale investimenti (Ready To Redeem)")
+        self.fin_inv_total_inv_value_var = tk.StringVar(value="EUR --")
+        self.fin_inv_bondora_var = tk.StringVar(value="Bondora: EUR --")
+        self.fin_inv_mintos_var = tk.StringVar(value="Mintos: EUR --")
+        self.fin_inv_relender_var = tk.StringVar(value="ReLender: EUR --")
+        self.fin_inv_directa_var = tk.StringVar(value="Directa: EUR --")
+        self.fin_inv_diff_label: tk.Label | None = None
+
         self._build_header()
         self._build_notebook()
         self._build_statusbar()
@@ -297,8 +313,195 @@ class App(tk.Tk):
                 self._build_live_investments_tab(frame)
             elif key == "next_to_be":
                 self._build_next_to_be_tab(frame)
+            elif key == "fin_inv":
+                self._build_fin_inv_tab(frame)
             else:
                 self.table_views[key] = self._build_data_table(frame, key)
+
+    def _build_fin_inv_tab(self, parent: tk.Frame):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(
+            wrapper,
+            text="Fin - Inv",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(anchor="w")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(12, 0))
+
+        tk.Label(
+            controls,
+            text="Categoria",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left")
+        ttk.Combobox(
+            controls,
+            textvariable=self.fin_inv_type_var,
+            state="readonly",
+            width=18,
+            values=["Fin casa", "Fin car", "Fhome + Fcar"],
+        ).pack(side="left", padx=(8, 20))
+
+        tk.Label(
+            controls,
+            text="Vista",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left")
+        ttk.Combobox(
+            controls,
+            textvariable=self.fin_inv_scope_var,
+            state="readonly",
+            width=18,
+            values=["Ready To Redeem", "All"],
+        ).pack(side="left", padx=(8, 0))
+
+        controls2 = tk.Frame(wrapper, bg=BG_TABLE)
+        controls2.pack(fill="x", pady=(10, 0))
+
+        tk.Label(
+            controls2,
+            text="Directa extra (€)",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left")
+        directa_entry = tk.Entry(
+            controls2,
+            textvariable=self.fin_inv_directa_input_var,
+            width=14,
+            bg=BG_FRAME,
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            font=FONT_TABLE,
+        )
+        directa_entry.pack(side="left", padx=(8, 10))
+
+        tk.Label(
+            controls2,
+            text="(netto: 74% dell'importo inserito)",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+        ).pack(side="left")
+
+        self.fin_inv_type_var.trace_add("write", lambda *_: self._refresh_fin_inv_tab())
+        self.fin_inv_scope_var.trace_add("write", lambda *_: self._refresh_fin_inv_tab())
+        self.fin_inv_directa_input_var.trace_add("write", lambda *_: self._refresh_fin_inv_tab())
+        directa_entry.bind("<Return>", lambda _e: self._refresh_fin_inv_tab())
+
+        body = tk.Frame(wrapper, bg=BG_TABLE)
+        body.pack(fill="both", expand=True, pady=(14, 0))
+
+        left = tk.Frame(body, bg=BG_FRAME, padx=16, pady=14)
+        left.pack(side="left", fill="both", expand=True)
+
+        tk.Label(left, text="Debito selezionato", font=FONT_TAB, bg=BG_FRAME, fg=FG_HEADER).pack(anchor="w")
+        tk.Label(
+            left,
+            textvariable=self.fin_inv_debt_value_var,
+            font=("Segoe UI", 18, "bold"),
+            bg=BG_FRAME,
+            fg=FG_NEGATIVE,
+        ).pack(anchor="w", pady=(6, 8))
+
+        tk.Label(
+            left,
+            textvariable=self.fin_inv_total_inv_title_var,
+            font=FONT_TAB,
+            bg=BG_FRAME,
+            fg=FG_HEADER,
+        ).pack(anchor="w", pady=(6, 0))
+        tk.Label(
+            left,
+            textvariable=self.fin_inv_total_inv_value_var,
+            font=("Segoe UI", 18, "bold"),
+            bg=BG_FRAME,
+            fg=FG_SOMMA,
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(
+            left,
+            text="Differenza (Debiti - Investimenti)",
+            font=FONT_TAB,
+            bg=BG_FRAME,
+            fg=FG_HEADER,
+        ).pack(anchor="w", pady=(10, 0))
+        self.fin_inv_diff_label = tk.Label(
+            left,
+            textvariable=self.fin_inv_diff_value_var,
+            font=("Segoe UI", 18, "bold"),
+            bg=BG_FRAME,
+            fg=FG_NEGATIVE,
+        )
+        self.fin_inv_diff_label.pack(anchor="w", pady=(4, 0))
+
+        right = tk.Frame(body, bg=BG_FRAME, padx=16, pady=14)
+        right.pack(side="left", fill="y", padx=(12, 0))
+
+        tk.Label(right, text="Dettaglio investimenti", font=FONT_TAB, bg=BG_FRAME, fg=FG_HEADER).pack(anchor="w", pady=(0, 6))
+        tk.Label(right, textvariable=self.fin_inv_bondora_var, font=FONT_SMALL, bg=BG_FRAME, fg=FG).pack(anchor="w")
+        tk.Label(right, textvariable=self.fin_inv_mintos_var, font=FONT_SMALL, bg=BG_FRAME, fg=FG).pack(anchor="w", pady=(2, 0))
+        tk.Label(right, textvariable=self.fin_inv_relender_var, font=FONT_SMALL, bg=BG_FRAME, fg=FG).pack(anchor="w", pady=(2, 0))
+        tk.Label(right, textvariable=self.fin_inv_directa_var, font=FONT_SMALL, bg=BG_FRAME, fg=FG).pack(anchor="w", pady=(2, 0))
+
+    def _get_fin_inv_debt_total(self) -> float:
+        selection = self.fin_inv_type_var.get().strip()
+        fin_home = float(self.fin_inv_debts.get("fin_home", 0.0) or 0.0)
+        fin_car = float(self.fin_inv_debts.get("fin_car", 0.0) or 0.0)
+
+        if selection == "Fin casa":
+            return fin_home
+        if selection == "Fin car":
+            return fin_car
+        return fin_home + fin_car
+
+    def _refresh_fin_inv_tab(self):
+        if not hasattr(self, "fin_inv_debt_value_var"):
+            return
+
+        debt_total = self._get_fin_inv_debt_total()
+        self.fin_inv_debt_value_var.set(self._format_money_it(debt_total))
+
+        bondora = self._get_current_platform_amount("Bondora")
+        mintos = self._get_current_platform_amount("Mintos")
+        relender = self._get_current_platform_amount("ReLender", aliases=["Re Lender", "Re-Lender", "Relender"])
+
+        directa_extra_raw = self._parse_localized_number(self.fin_inv_directa_input_var.get())
+        directa_extra = float(directa_extra_raw or 0.0)
+        directa_total = 5900.0 + (directa_extra * 0.74)
+
+        scope = self.fin_inv_scope_var.get().strip()
+        include_relender = scope == "All"
+        investments_total = bondora + mintos + directa_total + (relender if include_relender else 0.0)
+
+        self.fin_inv_bondora_var.set(f"Bondora: {self._format_money_it(bondora)}")
+        self.fin_inv_mintos_var.set(f"Mintos: {self._format_money_it(mintos)}")
+        rel_text = f"ReLender: {self._format_money_it(relender)}"
+        if not include_relender:
+            rel_text += " (escluso in Ready To Redeem)"
+        self.fin_inv_relender_var.set(rel_text)
+        self.fin_inv_directa_var.set(
+            f"Directa: {self._format_money_it(directa_total)} (5.900,00 + 74% input)"
+        )
+        self.fin_inv_total_inv_title_var.set(f"Totale investimenti ({scope})")
+        self.fin_inv_total_inv_value_var.set(self._format_money_it(investments_total))
+
+        diff = debt_total - investments_total
+        if diff > 0:
+            self.fin_inv_diff_value_var.set(self._format_money_it(diff))
+        else:
+            # Quando gli investimenti superano i debiti, mostra il valore in verde senza segno meno.
+            self.fin_inv_diff_value_var.set(self._format_money_it(abs(diff)))
+        if self.fin_inv_diff_label is not None:
+            self.fin_inv_diff_label.config(fg=FG_NEGATIVE if diff > 0 else FG_SOMMA)
 
     def _build_data_table(self, parent: tk.Frame, table_key: str) -> dict[str, tk.Widget]:
         frame = tk.Frame(parent, bg=BG_TABLE)
@@ -974,6 +1177,7 @@ class App(tk.Tk):
             gpp_data = get_gpp_anno_data(dbx)
             ctm_data = get_total_monthly_comparison_data(dbx)
             yearly_main_tables = get_yearly_main_tables_data(dbx, sheet_anno)
+            fin_inv_debts = get_fin_inv_debts(dbx, sheet_anno)
             self.after(0, lambda: self._populate_all(
                 tables,
                 goals,
@@ -982,6 +1186,7 @@ class App(tk.Tk):
                 gpp_data,
                 ctm_data,
                 yearly_main_tables,
+                fin_inv_debts,
                 sheet_anno,
             ))
             self._set_status("Dati caricati con successo.")
@@ -993,6 +1198,7 @@ class App(tk.Tk):
                       bondo_evo_data: dict[float, dict[str, object]], gpp_data: dict[str, object],
                       ctm_data: dict[str, object],
                       yearly_main_tables: dict[str, object],
+                      fin_inv_debts: dict[str, float],
                       sheet_anno: str):
         self.tables = tables
         self.platform_goals = goals
@@ -1000,6 +1206,7 @@ class App(tk.Tk):
         self.bondo_evo_data = bondo_evo_data
         self.gpp_data = gpp_data
         self.ctm_data = ctm_data
+        self.fin_inv_debts = fin_inv_debts if isinstance(fin_inv_debts, dict) else {"fin_home": 0.0, "fin_car": 0.0, "total": 0.0}
         self.tables_by_year = {
             str(year): year_tables
             for year, year_tables in (yearly_main_tables.get("tables_by_year", {}) if isinstance(yearly_main_tables, dict) else {}).items()
@@ -1032,6 +1239,7 @@ class App(tk.Tk):
         self._init_bondo_evo_filters()
         self._refresh_bondo_evo_display()
         self._refresh_live_investments_tab()
+        self._refresh_fin_inv_tab()
         self._refresh_ntb_display()
         if self.ctm_window is not None and self.ctm_window.winfo_exists():
             self._render_ctm_table()
