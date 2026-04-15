@@ -203,6 +203,16 @@ class App(tk.Tk):
         self.ntb_evo_info_frame: tk.Frame | None = None
         self._ntb_virtual_evo_data: dict = {}
 
+        # Main tab charts window (Investimenti / Guadagni / Inv+Guad)
+        self.mtc_window: tk.Toplevel | None = None
+        self.mtc_table_key: str = ""
+        self.mtc_year_var = tk.StringVar()
+        self.mtc_platform_var = tk.StringVar()
+        self.mtc_chart_frame: tk.Frame | None = None
+        self.mtc_mpl_canvas: FigureCanvasTkAgg | None = None
+        self.mtc_year_cb: ttk.Combobox | None = None
+        self.mtc_platform_cb: ttk.Combobox | None = None
+
         # Fin - Inv tab
         self.fin_inv_type_var = tk.StringVar(value="Fhome + Fcar")
         self.fin_inv_scope_var = tk.StringVar(value="Ready To Redeem")
@@ -521,6 +531,24 @@ class App(tk.Tk):
             year_cb.pack(side="left", padx=(8, 0))
             year_cb.bind("<<ComboboxSelected>>", lambda _e: self._on_main_year_change())
             self.main_year_cbs[table_key] = year_cb
+
+            # Bottone Grafici
+            _key = table_key  # capture for lambda
+            tk.Button(
+                controls,
+                text="📈 Grafici",
+                font=FONT_TAB,
+                fg=FG_HEADER,
+                bg=BG_FRAME,
+                activeforeground=FG_HEADER,
+                activebackground=SEL_BG,
+                relief="flat",
+                bd=0,
+                padx=14,
+                pady=4,
+                cursor="hand2",
+                command=lambda k=_key: self._open_main_tab_chart_window(k),
+            ).pack(side="left", padx=(16, 0))
 
         canvas = tk.Canvas(frame, bg=BG_TABLE, highlightthickness=0)
         vsb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
@@ -3978,6 +4006,263 @@ class App(tk.Tk):
                 row_frame, text=self._format_money_it(value),
                 font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA,
             ).pack(side="right")
+
+    # ── Main-tab Line Charts ─────────────────────────────────────
+
+    # Mapping nomi piattaforma normalizzati → etichetta display
+    _MTC_PLATFORM_ALIASES: dict[str, list[str]] = {
+        "Bondora":  ["bondora"],
+        "Mintos":   ["mintos"],
+        "ReLender": ["relender", "relender", "re lender", "re-lender"],
+    }
+    _MTC_LINE_COLORS = {
+        "Bondora":  "#89b4fa",   # blu
+        "Mintos":   "#a6e3a1",   # verde
+        "ReLender": "#f9e2af",   # giallo
+    }
+    _MTC_TABLE_TITLES = {
+        "investimenti": "Investimenti per piattaforma",
+        "guadagni":     "Guadagni per piattaforma",
+        "inv_guad":     "Inv + Guad per piattaforma",
+    }
+
+    def _mtc_extract_platform_value(self, df, platform_name: str, column: str) -> float:
+        """Estrae il valore di una piattaforma (con alias) da una colonna del DataFrame."""
+        if df is None or df.empty or "Piattaforma" not in df.columns:
+            return 0.0
+        aliases = set(self._MTC_PLATFORM_ALIASES.get(platform_name, [platform_name.lower()]))
+        for _, row in df.iterrows():
+            norm = self._normalize_platform_name(str(row.get("Piattaforma", "")))
+            if norm in aliases:
+                val = row.get(column, 0.0)
+                return float(val) if self._is_numeric_value(val) else 0.0
+        return 0.0
+
+    def _open_main_tab_chart_window(self, table_key: str):
+        """Apre (o porta in primo piano) la finestra grafici per il tab specificato."""
+        if self.mtc_window is not None and self.mtc_window.winfo_exists():
+            if self.mtc_table_key == table_key:
+                self.mtc_window.deiconify()
+                self.mtc_window.lift()
+                self.mtc_window.focus_force()
+                return
+            # Chiude la finestra precedente e ne apre una nuova per il nuovo table_key
+            self._close_main_tab_chart_window()
+
+        self.mtc_table_key = table_key
+        title_label = self._MTC_TABLE_TITLES.get(table_key, table_key.capitalize())
+        self.mtc_window = tk.Toplevel(self)
+        self.mtc_window.title(f"Own Finance – Grafici {title_label}")
+        self.mtc_window.geometry("1100x620")
+        self.mtc_window.configure(bg=BG_TABLE)
+        self.mtc_window.minsize(860, 500)
+        self.mtc_window.protocol("WM_DELETE_WINDOW", self._close_main_tab_chart_window)
+
+        self._build_mtc_window(self.mtc_window, title_label)
+        self._init_mtc_filters()
+        self._render_mtc_chart()
+
+    def _close_main_tab_chart_window(self):
+        self._clear_mtc_chart()
+        if self.mtc_window is not None and self.mtc_window.winfo_exists():
+            self.mtc_window.destroy()
+        self.mtc_window = None
+        self.mtc_chart_frame = None
+        self.mtc_year_cb = None
+        self.mtc_platform_cb = None
+        self._refocus_main()
+
+    def _build_mtc_window(self, win: tk.Toplevel, title_label: str):
+        wrapper = tk.Frame(win, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text=f"Grafici – {title_label}",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Chiudi",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_main_tab_chart_window,
+        ).pack(side="right")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(12, 0))
+
+        tk.Label(controls, text="Anno", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.mtc_year_cb = ttk.Combobox(
+            controls,
+            textvariable=self.mtc_year_var,
+            state="readonly",
+            width=14,
+            values=[],
+        )
+        self.mtc_year_cb.pack(side="left", padx=(8, 20))
+        self.mtc_year_cb.bind("<<ComboboxSelected>>", lambda _e: self._render_mtc_chart())
+
+        tk.Label(controls, text="Piattaforma", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        self.mtc_platform_cb = ttk.Combobox(
+            controls,
+            textvariable=self.mtc_platform_var,
+            state="readonly",
+            width=14,
+            values=["All", "Bondora", "Mintos", "ReLender"],
+        )
+        self.mtc_platform_cb.pack(side="left", padx=(8, 0))
+        self.mtc_platform_cb.bind("<<ComboboxSelected>>", lambda _e: self._render_mtc_chart())
+
+        self.mtc_chart_frame = tk.Frame(wrapper, bg=BG_TABLE)
+        self.mtc_chart_frame.pack(fill="both", expand=True, pady=(14, 0))
+
+    def _init_mtc_filters(self):
+        years = list(self.main_tab_years)
+        options = years + ["All Years"]
+        if self.mtc_year_cb is not None:
+            self.mtc_year_cb["values"] = options
+        if self.mtc_year_var.get() not in options:
+            self.mtc_year_var.set("All Years")
+
+        if self.mtc_platform_var.get() not in ["All", "Bondora", "Mintos", "ReLender"]:
+            self.mtc_platform_var.set("All")
+
+    def _clear_mtc_chart(self):
+        if self.mtc_mpl_canvas is not None:
+            try:
+                self.mtc_mpl_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self.mtc_mpl_canvas = None
+        if self.mtc_chart_frame is not None:
+            for child in self.mtc_chart_frame.winfo_children():
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
+
+    def _render_mtc_chart(self):
+        if self.mtc_chart_frame is None:
+            return
+        self._clear_mtc_chart()
+
+        selected_year = self.mtc_year_var.get().strip()
+        selected_platform = self.mtc_platform_var.get().strip()
+        table_key = self.mtc_table_key
+
+        platforms_to_show = (
+            ["Bondora", "Mintos", "ReLender"]
+            if selected_platform == "All"
+            else [selected_platform]
+        )
+
+        all_years = sorted(self.tables_by_year.keys(), key=int)
+
+        if not all_years:
+            tk.Label(
+                self.mtc_chart_frame,
+                text="Nessun dato disponibile.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack()
+            return
+
+        if selected_year == "All Years":
+            # X-axis = anni, Y = totale annuale per piattaforma
+            x_labels = all_years
+            series: dict[str, list[float]] = {p: [] for p in platforms_to_show}
+            for year in all_years:
+                df = self.tables_by_year.get(year, {}).get(table_key)
+                for platform in platforms_to_show:
+                    # Usa la colonna TOTALE se esiste, altrimenti somma i mesi
+                    val = 0.0
+                    if df is not None and not df.empty:
+                        if "TOTALE" in df.columns:
+                            val = self._mtc_extract_platform_value(df, platform, "TOTALE")
+                        else:
+                            val = sum(
+                                self._mtc_extract_platform_value(df, platform, m)
+                                for m in MESI if m in df.columns
+                            )
+                    series[platform].append(val)
+            x_rotation = 0
+            xlabel = "Anno"
+        else:
+            # X-axis = mesi dell'anno selezionato
+            df = self.tables_by_year.get(selected_year, {}).get(table_key)
+            month_cols = [m for m in MESI if df is not None and m in df.columns] if df is not None else []
+            x_labels = [m[:3].capitalize() for m in month_cols]
+            series = {p: [] for p in platforms_to_show}
+            for platform in platforms_to_show:
+                for month in month_cols:
+                    val = self._mtc_extract_platform_value(df, platform, month) if df is not None else 0.0
+                    series[platform].append(val)
+            x_rotation = 30
+            xlabel = f"Mesi {selected_year}"
+
+        # Costruisci il grafico
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        fig.patch.set_facecolor(BG_TABLE)
+        ax.set_facecolor(BG_TABLE)
+        ax.tick_params(colors=FG, labelsize=8)
+        ax.xaxis.label.set_color(FG)
+        ax.yaxis.label.set_color(FG)
+        ax.title.set_color(FG_HEADER)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(BG_FRAME)
+
+        x_pos = range(len(x_labels))
+        has_data = False
+        for platform in platforms_to_show:
+            y_vals = series[platform]
+            if any(abs(v) > 1e-9 for v in y_vals):
+                has_data = True
+            color = self._MTC_LINE_COLORS.get(platform, FG)
+            ax.plot(
+                list(x_pos),
+                y_vals,
+                marker="o",
+                markersize=5,
+                linewidth=2,
+                color=color,
+                label=platform,
+            )
+
+        ax.set_xticks(list(x_pos))
+        ax.set_xticklabels(x_labels, rotation=x_rotation, ha="right" if x_rotation else "center")
+        ax.set_xlabel(xlabel, color=FG)
+        table_title = self._MTC_TABLE_TITLES.get(table_key, table_key)
+        year_str = selected_year if selected_year != "All Years" else "tutti gli anni"
+        ax.set_title(f"{table_title} — {year_str}", color=FG_HEADER, fontsize=10)
+        ax.yaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(lambda v, _: self._format_number_it(v, 2))
+        )
+        if len(platforms_to_show) > 1 or has_data:
+            ax.legend(
+                facecolor=BG_FRAME,
+                edgecolor=BG_FRAME,
+                labelcolor=FG,
+                fontsize=8,
+            )
+        ax.grid(True, color=BG_FRAME, linestyle="--", linewidth=0.5)
+        fig.tight_layout(pad=1.5)
+
+        self.mtc_mpl_canvas = FigureCanvasTkAgg(fig, master=self.mtc_chart_frame)
+        self.mtc_mpl_canvas.draw()
+        self.mtc_mpl_canvas.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig)
 
 
 def main():
