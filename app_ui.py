@@ -4038,6 +4038,20 @@ class App(tk.Tk):
                 return float(val) if self._is_numeric_value(val) else 0.0
         return 0.0
 
+    def _mtc_get_inv_guad_year_value(self, df, platform_name: str) -> float:
+        """Per Inv+Guad annuale usa dicembre (o ultimo mese disponibile), non TOTALE."""
+        if df is None or df.empty:
+            return 0.0
+
+        if "DICEMBRE" in df.columns:
+            return self._mtc_extract_platform_value(df, platform_name, "DICEMBRE")
+
+        available_months = [m for m in MESI if m in df.columns]
+        if not available_months:
+            return 0.0
+
+        return self._mtc_extract_platform_value(df, platform_name, available_months[-1])
+
     def _open_main_tab_chart_window(self, table_key: str):
         """Apre (o porta in primo piano) la finestra grafici per il tab specificato."""
         if self.mtc_window is not None and self.mtc_window.winfo_exists():
@@ -4186,10 +4200,12 @@ class App(tk.Tk):
             for year in all_years:
                 df = self.tables_by_year.get(year, {}).get(table_key)
                 for platform in platforms_to_show:
-                    # Usa la colonna TOTALE se esiste, altrimenti somma i mesi
+                    # Per Inv+Guad la colonna TOTALE non e' il valore annuale da graficare.
                     val = 0.0
                     if df is not None and not df.empty:
-                        if "TOTALE" in df.columns:
+                        if table_key == "inv_guad":
+                            val = self._mtc_get_inv_guad_year_value(df, platform)
+                        elif "TOTALE" in df.columns:
                             val = self._mtc_extract_platform_value(df, platform, "TOTALE")
                         else:
                             val = sum(
@@ -4225,12 +4241,13 @@ class App(tk.Tk):
 
         x_pos = range(len(x_labels))
         has_data = False
+        line_items: list[tuple[object, str, list[float]]] = []
         for platform in platforms_to_show:
             y_vals = series[platform]
             if any(abs(v) > 1e-9 for v in y_vals):
                 has_data = True
             color = self._MTC_LINE_COLORS.get(platform, FG)
-            ax.plot(
+            line, = ax.plot(
                 list(x_pos),
                 y_vals,
                 marker="o",
@@ -4239,6 +4256,7 @@ class App(tk.Tk):
                 color=color,
                 label=platform,
             )
+            line_items.append((line, platform, y_vals))
 
         ax.set_xticks(list(x_pos))
         ax.set_xticklabels(x_labels, rotation=x_rotation, ha="right" if x_rotation else "center")
@@ -4258,6 +4276,49 @@ class App(tk.Tk):
             )
         ax.grid(True, color=BG_FRAME, linestyle="--", linewidth=0.5)
         fig.tight_layout(pad=1.5)
+
+        # Tooltip hover sui pallini del grafico
+        annotation = ax.annotate(
+            "",
+            xy=(0, 0),
+            xytext=(10, 10),
+            textcoords="offset points",
+            bbox=dict(boxstyle="round,pad=0.3", fc=BG_FRAME, ec=FG_HEADER, alpha=0.95),
+            color=FG,
+            fontsize=8,
+        )
+        annotation.set_visible(False)
+
+        def _on_hover(event):
+            if event.inaxes != ax:
+                if annotation.get_visible():
+                    annotation.set_visible(False)
+                    self.mtc_mpl_canvas.draw_idle()
+                return
+
+            for line, platform, y_vals in line_items:
+                contains, data = line.contains(event)
+                if not contains:
+                    continue
+
+                idx = data.get("ind", [None])[0]
+                if idx is None or idx >= len(y_vals) or idx >= len(x_labels):
+                    continue
+
+                y_val = float(y_vals[idx])
+                annotation.xy = (idx, y_val)
+                annotation.set_text(
+                    f"{platform}\n{x_labels[idx]}\n{self._format_money_it(y_val, prefix='€')}"
+                )
+                annotation.set_visible(True)
+                self.mtc_mpl_canvas.draw_idle()
+                return
+
+            if annotation.get_visible():
+                annotation.set_visible(False)
+                self.mtc_mpl_canvas.draw_idle()
+
+        fig.canvas.mpl_connect("motion_notify_event", _on_hover)
 
         self.mtc_mpl_canvas = FigureCanvasTkAgg(fig, master=self.mtc_chart_frame)
         self.mtc_mpl_canvas.draw()
