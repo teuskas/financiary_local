@@ -370,7 +370,7 @@ class App(tk.Tk):
             textvariable=self.fin_inv_scope_var,
             state="readonly",
             width=18,
-            values=["Ready To Redeem", "All"],
+            values=["Ready To Redeem", "All", "Only Directa"],
         ).pack(side="left", padx=(8, 0))
 
         controls2 = tk.Frame(wrapper, bg=BG_TABLE)
@@ -489,13 +489,24 @@ class App(tk.Tk):
         directa_total = 5900.0 + (directa_extra * 0.74)
 
         scope = self.fin_inv_scope_var.get().strip()
-        include_relender = scope == "All"
-        investments_total = bondora + mintos + directa_total + (relender if include_relender else 0.0)
+        
+        # Calcola gli investimenti in base alla vista selezionata
+        if scope == "Only Directa":
+            # Solo Directa, senza Bondora, Mintos, ReLender
+            investments_total = directa_total
+        elif scope == "All":
+            # Ready To Redeem + ReLender
+            investments_total = bondora + mintos + directa_total + relender
+        else:  # "Ready To Redeem" (default)
+            # Ready To Redeem senza ReLender
+            investments_total = bondora + mintos + directa_total
 
         self.fin_inv_bondora_var.set(f"Bondora: {self._format_money_it(bondora)}")
         self.fin_inv_mintos_var.set(f"Mintos: {self._format_money_it(mintos)}")
         rel_text = f"ReLender: {self._format_money_it(relender)}"
-        if not include_relender:
+        if scope == "Only Directa":
+            rel_text += " (escluso in Only Directa)"
+        elif scope == "Ready To Redeem":
             rel_text += " (escluso in Ready To Redeem)"
         self.fin_inv_relender_var.set(rel_text)
         self.fin_inv_directa_var.set(
