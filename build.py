@@ -48,12 +48,16 @@ def clean_previous():
 
 def build():
     """Lancia PyInstaller con il file .spec."""
-    spec_file = PROJECT_DIR / "financiary.spec"
-    if not spec_file.exists():
-        print("[ERRORE] financiary.spec non trovato!")
+    spec_candidates = [
+        PROJECT_DIR / "Own Finance.spec",
+        PROJECT_DIR / "financiary.spec",
+    ]
+    spec_file = next((candidate for candidate in spec_candidates if candidate.exists()), None)
+    if spec_file is None:
+        print("[ERRORE] Nessun file .spec trovato (attesi: 'Own Finance.spec' o 'financiary.spec').")
         sys.exit(1)
 
-    print(f"[...] Build in corso per {sys.platform}...")
+    print(f"[...] Build in corso per {sys.platform} usando {spec_file.name}...")
     result = subprocess.run(
         [sys.executable, "-m", "PyInstaller", str(spec_file), "--distpath", str(PROJECT_DIR / "dist")],
         cwd=str(PROJECT_DIR),
@@ -67,13 +71,15 @@ def build():
 def report():
     """Mostra il percorso dell'eseguibile generato."""
     if sys.platform == "win32":
-        exe = DIST_DIR / "OwnFinance.exe"
+        candidates = [DIST_DIR / "Own Finance.exe", DIST_DIR / "OwnFinance.exe"]
     elif sys.platform == "darwin":
-        exe = DIST_DIR / "OwnFinance.app"
+        candidates = [DIST_DIR / "Own Finance.app", DIST_DIR / "OwnFinance.app"]
     else:
-        exe = DIST_DIR / "OwnFinance"
+        candidates = [DIST_DIR / "Own Finance", DIST_DIR / "OwnFinance"]
 
-    if exe.exists():
+    exe = next((candidate for candidate in candidates if candidate.exists()), None)
+
+    if exe is not None:
         print(f"\n[OK] Eseguibile generato con successo:")
         print(f"     {exe}")
         print(f"\nPuoi copiarlo dove preferisci e avviarlo direttamente.")

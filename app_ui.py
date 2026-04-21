@@ -2091,13 +2091,21 @@ class App(tk.Tk):
                             euro_target = float(detail.get("target", 0.0))
                             euro_date = detail.get("date")
                             euro_amount = detail.get("amount")
+                            euro_missing_days = detail.get("missing_days")
+                            euro_days_text = (
+                                f" - Giorni mancanti: {int(euro_missing_days)}"
+                                if isinstance(euro_missing_days, (int, float))
+                                else " - Giorni mancanti: N/D"
+                            )
                             if isinstance(euro_date, date) and isinstance(euro_amount, float):
                                 detail_lines.append(
                                     f"{detail_idx}) {self._format_money_it(euro_target)}: {self._format_date_with_weekday_it(euro_date)} "
-                                    f"(stima: {self._format_money_it(euro_amount)})"
+                                    f"(stima: {self._format_money_it(euro_amount)}){euro_days_text}"
                                 )
                             else:
-                                detail_lines.append(f"{detail_idx}) {self._format_money_it(euro_target)}: data non stimabile")
+                                detail_lines.append(
+                                    f"{detail_idx}) {self._format_money_it(euro_target)}: data non stimabile{euro_days_text}"
+                                )
                         detail_text = "\n".join(detail_lines)
 
                     detail_frame = tk.Frame(self.pv_targets_frame, bg=BG_TABLE)

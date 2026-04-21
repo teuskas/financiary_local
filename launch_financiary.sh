@@ -6,7 +6,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # Launcher portabile: prova nome nuovo e fallback legacy
 CANDIDATES=(
+  "$SCRIPT_DIR/Own Finance"
   "$SCRIPT_DIR/OwnFinance"
+  "$SCRIPT_DIR/dist/Own Finance"
   "$SCRIPT_DIR/dist/OwnFinance"
   "$SCRIPT_DIR/Financiary"
   "$SCRIPT_DIR/dist/Financiary"
