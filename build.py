@@ -49,8 +49,8 @@ def clean_previous():
 def build():
     """Lancia PyInstaller con il file .spec."""
     spec_candidates = [
-        PROJECT_DIR / "Own Finance.spec",
         PROJECT_DIR / "financiary.spec",
+        PROJECT_DIR / "Own Finance.spec",
     ]
     spec_file = next((candidate for candidate in spec_candidates if candidate.exists()), None)
     if spec_file is None:

@@ -1240,7 +1240,7 @@ class App(tk.Tk):
             ))
             self._set_status("Dati caricati con successo.")
         except Exception as ex:
-            self.after(0, lambda: messagebox.showerror("Errore", str(ex)))
+            self.after(0, lambda err=ex: messagebox.showerror("Errore", str(err)))
             self._set_status(f"Errore: {ex}")
 
     def _populate_all(self, tables: dict, goals: dict[str, float], gt_anno: dict[str, object],

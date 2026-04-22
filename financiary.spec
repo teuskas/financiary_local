@@ -29,7 +29,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['setuptools', 'pkg_resources', '_distutils_hack'],
     noarchive=False,
     optimize=0,
 )
