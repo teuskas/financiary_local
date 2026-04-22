@@ -3,6 +3,7 @@ app_ui.py
 App desktop con 3 tab per visualizzare le tabelle del foglio 2026.
 """
 
+import math
 import os
 import sys
 import threading
@@ -615,7 +616,7 @@ class App(tk.Tk):
             df = year_tables.get(key)
             if view is None or df is None:
                 continue
-            self._populate_data_table(view, df)
+            self._populate_data_table(view, df, table_key=key)
 
     def _on_main_year_change(self):
         self._refresh_main_tables_for_year()
@@ -682,7 +683,7 @@ class App(tk.Tk):
             return "#585b70"
         return FG_SOMMA if numeric_value > 0 else FG_NEGATIVE
 
-    def _populate_data_table(self, table_view: dict[str, tk.Widget], df):
+    def _populate_data_table(self, table_view: dict[str, tk.Widget], df, table_key: str | None = None):
         body = table_view["body"]
         canvas = table_view["canvas"]
 
@@ -691,13 +692,19 @@ class App(tk.Tk):
 
         df = df.copy()
 
-        # Aggiungi colonna TOTALE se non esiste
+        show_total_column = table_key != "inv_guad"
+
+        # Aggiungi colonna TOTALE se non esiste (tranne per Inv + Guad)
         cols = list(df.columns)
-        if "TOTALE" not in cols:
+        if show_total_column and "TOTALE" not in cols:
             mesi_cols = [col for col in cols if col in MESI]
             df["TOTALE"] = df[mesi_cols].apply(
                 lambda row: sum(float(self._safe_value(v)) for v in row), axis=1
             )
+            cols = list(df.columns)
+
+        if not show_total_column and "TOTALE" in cols:
+            df = df.drop(columns=["TOTALE"])
             cols = list(df.columns)
 
         # Ultima cella: la SOMMA della colonna TOTALE deve riflettere sempre
@@ -711,8 +718,11 @@ class App(tk.Tk):
         numeric_cols = [col for col in cols if col != "Piattaforma"]
 
         for col_idx, col in enumerate(cols):
-            # Colonna TOTALE un po' più larga per stare bene
-            col_width = 160 if col == "Piattaforma" else (130 if col == "TOTALE" else 110)
+            # Nel tab Inv + Guad teniamo colonne un filo più compatte.
+            if table_key == "inv_guad":
+                col_width = 150 if col == "Piattaforma" else 100
+            else:
+                col_width = 160 if col == "Piattaforma" else (130 if col == "TOTALE" else 110)
             body.grid_columnconfigure(col_idx, minsize=col_width, weight=0)
             tk.Label(
                 body,
@@ -2083,10 +2093,33 @@ class App(tk.Tk):
 
                 if self.pv_active_detail_index == idx:
                     detail_rows = item.get("euro_details") or []
+
+                    # Calcola le soglie cap_pr (cifre che aumentano il guadagno giornaliero di 1 centesimo)
+                    cap_pr_milestones: set[int] = set()
+                    for bondo_row in self.bondo_evo_data.values():
+                        cp = bondo_row.get("cap_pr")
+                        if cp is not None:
+                            try:
+                                cp_val = float(cp)
+                                if cp_val > 0:
+                                    cap_pr_milestones.add(math.ceil(cp_val))
+                            except (ValueError, TypeError):
+                                pass
+
+                    detail_frame = tk.Frame(self.pv_targets_frame, bg=BG_TABLE)
+                    detail_frame.grid(row=grid_row, column=0, sticky="ew", padx=(18, 0), pady=(0, 4))
+                    grid_row += 1
+
                     if not detail_rows:
-                        detail_text = "Dettaglio non disponibile."
+                        tk.Label(
+                            detail_frame,
+                            text="Dettaglio non disponibile.",
+                            font=FONT_SMALL,
+                            bg=BG_TABLE,
+                            fg=FG_HEADER,
+                            justify="left",
+                        ).pack(anchor="w")
                     else:
-                        detail_lines = []
                         for detail_idx, detail in enumerate(detail_rows, start=1):
                             euro_target = float(detail.get("target", 0.0))
                             euro_date = detail.get("date")
@@ -2098,28 +2131,30 @@ class App(tk.Tk):
                                 else " - Giorni mancanti: N/D"
                             )
                             if isinstance(euro_date, date) and isinstance(euro_amount, float):
-                                detail_lines.append(
-                                    f"{detail_idx}) {self._format_money_it(euro_target)}: {self._format_date_with_weekday_it(euro_date)} "
+                                line_text = (
+                                    f"{detail_idx}) {self._format_money_it(euro_target)}: "
+                                    f"{self._format_date_with_weekday_it(euro_date)} "
                                     f"(stima: {self._format_money_it(euro_amount)}){euro_days_text}"
                                 )
                             else:
-                                detail_lines.append(
-                                    f"{detail_idx}) {self._format_money_it(euro_target)}: data non stimabile{euro_days_text}"
+                                line_text = (
+                                    f"{detail_idx}) {self._format_money_it(euro_target)}: "
+                                    f"data non stimabile{euro_days_text}"
                                 )
-                        detail_text = "\n".join(detail_lines)
 
-                    detail_frame = tk.Frame(self.pv_targets_frame, bg=BG_TABLE)
-                    detail_frame.grid(row=grid_row, column=0, sticky="ew", padx=(18, 0), pady=(0, 4))
-                    grid_row += 1
+                            # Evidenzia in verde le soglie che aumentano il guadagno giornaliero
+                            is_milestone = int(euro_target) in cap_pr_milestones
+                            line_color = FG_SOMMA if is_milestone else FG_HEADER
 
-                    tk.Label(
-                        detail_frame,
-                        text=detail_text,
-                        font=FONT_SMALL,
-                        bg=BG_TABLE,
-                        fg=FG_HEADER,
-                        justify="left",
-                    ).pack(anchor="w")
+                            row_lbl = tk.Label(
+                                detail_frame,
+                                text=line_text,
+                                font=("Segoe UI", 9, "bold") if is_milestone else FONT_SMALL,
+                                bg=BG_TABLE,
+                                fg=line_color,
+                                justify="left",
+                            )
+                            row_lbl.pack(anchor="w")
 
     def _toggle_pv_detail(self, row_index: int, enabled: bool):
         if enabled:
