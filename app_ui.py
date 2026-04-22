@@ -2763,7 +2763,7 @@ class App(tk.Tk):
                 cell_fg = FG_SOMMA if month_value > 0 else FG
                 tk.Label(
                     self.bmb_table_body,
-                    text=self._format_money_it(month_value),
+                    text=self._format_number_it(month_value, 2),
                     font=FONT_SMALL,
                     bg=cell_bg,
                     fg=cell_fg,
@@ -2776,7 +2776,7 @@ class App(tk.Tk):
 
             tk.Label(
                 self.bmb_table_body,
-                text=self._format_money_it(annual_total),
+                text=self._format_number_it(annual_total, 2),
                 font=("Segoe UI", 10, "bold"),
                 bg=BG_TABLE,
                 fg=FG_HEADER,
