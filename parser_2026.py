@@ -37,7 +37,7 @@ SHEET_GT_ANNO = "GT_ANNO"
 SHEET_BONDO_EVO = "Bondo_Evo"
 SHEET_GPP_ANNO = "GPP_ANNO"
 
-MONTHLY_COMPARISON_SCOPES = ("Totale", "Bondora + Mintos")
+MONTHLY_COMPARISON_SCOPES = ("Totale", "Bondora + Mintos", "Bondora", "Mintos", "ReLender")
 
 GT_TITLE_GUADAGNI = "PIATTAFORMA/ANNO"
 GT_TITLE_MEDIE = "MEDIA 12 M"
@@ -314,6 +314,12 @@ def get_monthly_comparison_total(month_details: dict[str, float] | None, scope: 
 
     if scope == "Bondora + Mintos":
         return bondora + mintos
+    if scope == "Bondora":
+        return bondora
+    if scope == "Mintos":
+        return mintos
+    if scope == "ReLender":
+        return relender
     return bondora + mintos + relender
 
 
