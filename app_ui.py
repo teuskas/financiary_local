@@ -2769,7 +2769,7 @@ class App(tk.Tk):
                     fg=cell_fg,
                     padx=8,
                     pady=6,
-                    anchor="e",
+                    anchor="center",
                     highlightthickness=1,
                     highlightbackground=BG,
                 ).grid(row=row_idx, column=month_idx, sticky="nsew")
@@ -2782,7 +2782,7 @@ class App(tk.Tk):
                 fg=FG_HEADER,
                 padx=10,
                 pady=6,
-                anchor="e",
+                anchor="center",
                 highlightthickness=1,
                 highlightbackground=BG,
             ).grid(row=row_idx, column=len(cols) - 1, sticky="nsew")
