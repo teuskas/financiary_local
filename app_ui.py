@@ -188,6 +188,12 @@ class App(tk.Tk):
         self.pv_hint_var = tk.StringVar(value="")
         self.pv_active_detail_index: int | None = None
 
+        # Previsionale mensile Bondora
+        self.bmb_window: tk.Toplevel | None = None
+        self.bmb_hint_var = tk.StringVar(value="")
+        self.bmb_table_canvas: tk.Canvas | None = None
+        self.bmb_table_body: tk.Frame | None = None
+
         self.live_bm_value_var = tk.StringVar(value="EUR --")
         self.live_bmr_value_var = tk.StringVar(value="EUR --")
         self.live_bondora_value_var = tk.StringVar(value="EUR --")
@@ -1051,6 +1057,23 @@ class App(tk.Tk):
             command=self._go_to_ctm_window,
         )
         link_confronto_totale.pack(side="top", anchor="w", padx=10, pady=(0, 8))
+
+        link_bondora_mensile = tk.Button(
+            content,
+            text="Previsionale mensile Bondora",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self._go_to_bmb_window,
+        )
+        link_bondora_mensile.pack(side="top", anchor="w", padx=10, pady=(0, 8))
 
     def _build_bondora_evolution_tab(self, parent,):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
@@ -2500,6 +2523,272 @@ class App(tk.Tk):
                 f"Guadagno previsionale anno: {self._format_money_it(total_current)} + "
                 f"{self._format_money_it(total_projected)} = {self._format_money_it(total)}"
             )
+
+    def _go_to_bmb_window(self):
+        if self.bmb_window is not None and self.bmb_window.winfo_exists():
+            self.bmb_window.deiconify()
+            self.bmb_window.lift()
+            self.bmb_window.focus_force()
+            self._render_bmb_table()
+            return
+
+        self.bmb_window = tk.Toplevel(self)
+        self.bmb_window.title("Own Finance - Previsionale mensile Bondora")
+        self.bmb_window.geometry("1480x560")
+        self.bmb_window.configure(bg=BG_TABLE)
+        self.bmb_window.minsize(1100, 420)
+        self.bmb_window.protocol("WM_DELETE_WINDOW", self._close_bmb_window)
+
+        self._build_bmb_window(self.bmb_window)
+        self._render_bmb_table()
+
+    def _close_bmb_window(self):
+        if self.bmb_window is not None and self.bmb_window.winfo_exists():
+            self.bmb_window.destroy()
+        self.bmb_window = None
+        self.bmb_table_canvas = None
+        self.bmb_table_body = None
+        self._refocus_main()
+
+    def _build_bmb_window(self, parent: tk.Toplevel):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text="Previsionale mensile Bondora",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Torna indietro",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_bmb_window,
+        ).pack(side="right")
+
+        tk.Label(
+            wrapper,
+            textvariable=self.bmb_hint_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", pady=(10, 8))
+
+        table_wrapper = tk.Frame(wrapper, bg=BG_TABLE)
+        table_wrapper.pack(fill="both", expand=True)
+
+        self.bmb_table_canvas = tk.Canvas(table_wrapper, bg=BG_TABLE, highlightthickness=0)
+        vsb = ttk.Scrollbar(table_wrapper, orient="vertical", command=self.bmb_table_canvas.yview)
+        hsb = ttk.Scrollbar(table_wrapper, orient="horizontal", command=self.bmb_table_canvas.xview)
+        self.bmb_table_canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        self.bmb_table_canvas.pack(side="left", fill="both", expand=True)
+
+        self.bmb_table_body = tk.Frame(self.bmb_table_canvas, bg=BG_TABLE)
+        window_id = self.bmb_table_canvas.create_window((0, 0), window=self.bmb_table_body, anchor="nw")
+
+        def _refresh_scrollregion(_event=None):
+            if self.bmb_table_canvas is not None:
+                self.bmb_table_canvas.configure(scrollregion=self.bmb_table_canvas.bbox("all"))
+
+        def _sync_width(event):
+            if self.bmb_table_canvas is None or self.bmb_table_body is None:
+                return
+            requested = self.bmb_table_body.winfo_reqwidth()
+            self.bmb_table_canvas.itemconfigure(window_id, width=max(event.width, requested))
+
+        self.bmb_table_body.bind("<Configure>", _refresh_scrollregion)
+        self.bmb_table_canvas.bind("<Configure>", _sync_width)
+
+    def _get_ctm_bondora_monthly_values_for_year(self, year: str) -> dict[str, float]:
+        values = {month: 0.0 for month in MESI}
+        if not isinstance(self.ctm_data, dict):
+            return values
+
+        rows = self.ctm_data.get("rows", [])
+        if not isinstance(rows, list):
+            return values
+
+        for row in rows:
+            if str(row.get("year", "")).strip() != str(year):
+                continue
+            details = row.get("details", {}) if isinstance(row.get("details", {}), dict) else {}
+            for month in MESI:
+                month_details = details.get(month, {}) if isinstance(details.get(month, {}), dict) else {}
+                values[month] = float(month_details.get("Bondora", 0.0) or 0.0)
+            break
+        return values
+
+    def _calculate_bondora_monthly_forecast_rows(self, horizon_years: int = 10) -> list[dict[str, object]]:
+        today = date.today()
+        start_year = today.year
+        end_year = start_year + horizon_years
+
+        current_amount, daily_rate = self._get_bondora_current_snapshot()
+
+        monthly_projected: dict[tuple[int, int], float] = {
+            (year, month): 0.0
+            for year in range(start_year, end_year + 1)
+            for month in range(1, 13)
+        }
+
+        milestones: list[tuple[float, float]] = []
+        for daily, row in self.bondo_evo_data.items():
+            cap_pr = row.get("cap_pr")
+            try:
+                cap_pr_value = float(cap_pr)
+                daily_value = float(daily)
+            except (TypeError, ValueError):
+                continue
+            if cap_pr_value <= 0.0 or daily_value <= 0.0:
+                continue
+            milestones.append((cap_pr_value, daily_value))
+        milestones.sort(key=lambda item: item[0])
+
+        milestone_idx = 0
+        while milestone_idx < len(milestones) and current_amount + 1e-9 >= milestones[milestone_idx][0]:
+            daily_rate = max(daily_rate, milestones[milestone_idx][1])
+            milestone_idx += 1
+
+        end_date = date(end_year, 12, 31)
+        for day_ord in range((today + timedelta(days=1)).toordinal(), end_date.toordinal() + 1):
+            while milestone_idx < len(milestones) and current_amount + 1e-9 >= milestones[milestone_idx][0]:
+                daily_rate = max(daily_rate, milestones[milestone_idx][1])
+                milestone_idx += 1
+
+            current_day = date.fromordinal(day_ord)
+            current_amount += daily_rate
+            key = (current_day.year, current_day.month)
+            if key in monthly_projected:
+                monthly_projected[key] += daily_rate
+
+        current_year_actual = self._get_ctm_bondora_monthly_values_for_year(str(start_year))
+        rows: list[dict[str, object]] = []
+        for year in range(start_year, end_year + 1):
+            monthly_values: dict[str, float] = {}
+            for month_idx, month_name in enumerate(MESI, start=1):
+                value = float(monthly_projected.get((year, month_idx), 0.0))
+                if year == start_year:
+                    actual_value = float(current_year_actual.get(month_name, 0.0) or 0.0)
+                    if month_idx < today.month:
+                        value = actual_value
+                    elif month_idx == today.month and actual_value > 0.0:
+                        value += actual_value
+                monthly_values[month_name] = value
+            annual_total = sum(monthly_values.values())
+            rows.append({"year": year, "monthly": monthly_values, "annual_total": annual_total})
+
+        return rows
+
+    def _render_bmb_table(self):
+        if self.bmb_table_body is None or self.bmb_table_canvas is None:
+            return
+
+        for child in self.bmb_table_body.winfo_children():
+            child.destroy()
+
+        rows = self._calculate_bondora_monthly_forecast_rows(horizon_years=10)
+        today = date.today()
+
+        if not rows:
+            self.bmb_hint_var.set("Nessun dato disponibile per il previsionale mensile Bondora.")
+            tk.Label(
+                self.bmb_table_body,
+                text="Nessun dato disponibile.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack(anchor="w", padx=10, pady=10)
+            return
+
+        self.bmb_hint_var.set(
+            "Mesi già trascorsi dell'anno corrente evidenziati in verde. "
+            "Previsione calcolata assumendo nessun nuovo versamento."
+        )
+
+        cols = ["Anno"] + [month.capitalize() for month in MESI] + ["Totale"]
+        for col_idx, col_name in enumerate(cols):
+            width = 90 if col_name == "Anno" else (120 if col_name == "Totale" else 96)
+            self.bmb_table_body.grid_columnconfigure(col_idx, minsize=width, weight=0)
+            tk.Label(
+                self.bmb_table_body,
+                text=col_name,
+                font=FONT_TAB,
+                bg=BG_FRAME,
+                fg=FG_HEADER,
+                padx=10,
+                pady=8,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=0, column=col_idx, sticky="nsew")
+
+        past_month_bg = "#355d45"
+        for row_idx, row in enumerate(rows, start=1):
+            year_value = int(row.get("year", 0) or 0)
+            monthly = row.get("monthly", {}) if isinstance(row.get("monthly", {}), dict) else {}
+            annual_total = float(row.get("annual_total", 0.0) or 0.0)
+
+            tk.Label(
+                self.bmb_table_body,
+                text=str(year_value),
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_HEADER,
+                padx=10,
+                pady=6,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=row_idx, column=0, sticky="nsew")
+
+            for month_idx, month_name in enumerate(MESI, start=1):
+                month_value = float(monthly.get(month_name, 0.0) or 0.0)
+                is_past_current_year = year_value == today.year and month_idx < today.month
+                cell_bg = past_month_bg if is_past_current_year else BG_TABLE
+                cell_fg = FG_SOMMA if month_value > 0 else FG
+                tk.Label(
+                    self.bmb_table_body,
+                    text=self._format_money_it(month_value),
+                    font=FONT_SMALL,
+                    bg=cell_bg,
+                    fg=cell_fg,
+                    padx=8,
+                    pady=6,
+                    anchor="e",
+                    highlightthickness=1,
+                    highlightbackground=BG,
+                ).grid(row=row_idx, column=month_idx, sticky="nsew")
+
+            tk.Label(
+                self.bmb_table_body,
+                text=self._format_money_it(annual_total),
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_HEADER,
+                padx=10,
+                pady=6,
+                anchor="e",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=row_idx, column=len(cols) - 1, sticky="nsew")
+
+        self.bmb_table_body.update_idletasks()
+        self.bmb_table_canvas.configure(scrollregion=self.bmb_table_canvas.bbox("all"))
 
     def _go_to_mm_window(self):
         if self.mm_window is not None and self.mm_window.winfo_exists():
