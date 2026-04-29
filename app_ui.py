@@ -193,6 +193,8 @@ class App(tk.Tk):
         self.bmb_hint_var = tk.StringVar(value="")
         self.bmb_table_canvas: tk.Canvas | None = None
         self.bmb_table_body: tk.Frame | None = None
+        self.bmb_detail_window: tk.Toplevel | None = None
+        self.bmb_monthly_data: dict[tuple[int, int], dict[str, object]] = {}
 
         self.live_bm_value_var = tk.StringVar(value="EUR --")
         self.live_bmr_value_var = tk.StringVar(value="EUR --")
@@ -2633,7 +2635,10 @@ class App(tk.Tk):
             break
         return values
 
-    def _calculate_bondora_monthly_forecast_rows(self, horizon_years: int = 10) -> list[dict[str, object]]:
+    def _calculate_bondora_monthly_forecast_rows(
+        self,
+        horizon_years: int = 10,
+    ) -> tuple[list[dict[str, object]], dict[tuple[int, int], dict[str, object]]]:
         today = date.today()
         start_year = today.year
         end_year = start_year + horizon_years
@@ -2677,22 +2682,58 @@ class App(tk.Tk):
                 monthly_projected[key] += daily_rate
 
         current_year_actual = self._get_ctm_bondora_monthly_values_for_year(str(start_year))
+        actual_until_today = sum(
+            float(current_year_actual.get(month_name, 0.0) or 0.0)
+            for month_name in MESI[: today.month]
+        )
+
+        # Ricava il saldo a inizio anno partendo dallo snapshot attuale.
+        start_of_year_balance = max(0.0, current_amount - actual_until_today)
+        balance_cursor = start_of_year_balance
+
         rows: list[dict[str, object]] = []
+        month_details: dict[tuple[int, int], dict[str, object]] = {}
         for year in range(start_year, end_year + 1):
             monthly_values: dict[str, float] = {}
             for month_idx, month_name in enumerate(MESI, start=1):
-                value = float(monthly_projected.get((year, month_idx), 0.0))
+                projected_value = float(monthly_projected.get((year, month_idx), 0.0))
+                actual_value = 0.0
+                source = "forecast"
+
                 if year == start_year:
                     actual_value = float(current_year_actual.get(month_name, 0.0) or 0.0)
                     if month_idx < today.month:
                         value = actual_value
-                    elif month_idx == today.month and actual_value > 0.0:
-                        value += actual_value
+                        source = "actual"
+                    elif month_idx == today.month:
+                        value = actual_value + projected_value
+                        source = "actual+forecast" if actual_value > 0.0 else "forecast"
+                    else:
+                        value = projected_value
+                else:
+                    value = projected_value
+
+                month_start = balance_cursor
+                month_end = month_start + value
+                balance_cursor = month_end
+
                 monthly_values[month_name] = value
+                month_details[(year, month_idx)] = {
+                    "year": year,
+                    "month_idx": month_idx,
+                    "month_name": month_name,
+                    "gain": value,
+                    "actual_gain": actual_value,
+                    "projected_gain": projected_value,
+                    "start_balance": month_start,
+                    "end_balance": month_end,
+                    "source": source,
+                }
+
             annual_total = sum(monthly_values.values())
             rows.append({"year": year, "monthly": monthly_values, "annual_total": annual_total})
 
-        return rows
+        return rows, month_details
 
     def _render_bmb_table(self):
         if self.bmb_table_body is None or self.bmb_table_canvas is None:
@@ -2701,8 +2742,9 @@ class App(tk.Tk):
         for child in self.bmb_table_body.winfo_children():
             child.destroy()
 
-        rows = self._calculate_bondora_monthly_forecast_rows(horizon_years=10)
+        rows, month_details = self._calculate_bondora_monthly_forecast_rows(horizon_years=10)
         today = date.today()
+        self.bmb_monthly_data = month_details
 
         if not rows:
             self.bmb_hint_var.set("Nessun dato disponibile per il previsionale mensile Bondora.")
@@ -2716,8 +2758,9 @@ class App(tk.Tk):
             return
 
         self.bmb_hint_var.set(
-            "Mesi già trascorsi dell'anno corrente evidenziati in verde. "
-            "Previsione calcolata assumendo nessun nuovo versamento."
+            "Mesi gia trascorsi dell'anno corrente evidenziati in verde. "
+            "Previsione calcolata assumendo nessun nuovo versamento. "
+            "Clicca su un valore mensile per visualizzare il saldo atteso a fine mese."
         )
 
         cols = ["Anno"] + [month.capitalize() for month in MESI] + ["Totale"]
@@ -2761,7 +2804,8 @@ class App(tk.Tk):
                 is_past_current_year = year_value == today.year and month_idx < today.month
                 cell_bg = past_month_bg if is_past_current_year else BG_TABLE
                 cell_fg = FG_SOMMA if month_value > 0 else FG
-                tk.Label(
+
+                month_label = tk.Label(
                     self.bmb_table_body,
                     text=self._format_number_it(month_value, 2),
                     font=FONT_SMALL,
@@ -2772,7 +2816,13 @@ class App(tk.Tk):
                     anchor="center",
                     highlightthickness=1,
                     highlightbackground=BG,
-                ).grid(row=row_idx, column=month_idx, sticky="nsew")
+                    cursor="hand2",
+                )
+                month_label.grid(row=row_idx, column=month_idx, sticky="nsew")
+                month_label.bind(
+                    "<Button-1>",
+                    lambda _e, y=year_value, m=month_idx: self._open_bmb_detail_window(y, m),
+                )
 
             tk.Label(
                 self.bmb_table_body,
@@ -2789,6 +2839,140 @@ class App(tk.Tk):
 
         self.bmb_table_body.update_idletasks()
         self.bmb_table_canvas.configure(scrollregion=self.bmb_table_canvas.bbox("all"))
+
+    def _open_bmb_detail_window(self, year: int, month_idx: int):
+        """Apre una finestra con i dettagli della previsione mensile per Bondora."""
+        if self.bmb_detail_window is not None and self.bmb_detail_window.winfo_exists():
+            self.bmb_detail_window.destroy()
+
+        self.bmb_detail_window = tk.Toplevel(self)
+        self.bmb_detail_window.title("Own Finance - Dettaglio previsione mensile Bondora")
+        self.bmb_detail_window.geometry("600x400")
+        self.bmb_detail_window.configure(bg=BG_TABLE)
+        self.bmb_detail_window.minsize(500, 300)
+        self.bmb_detail_window.protocol("WM_DELETE_WINDOW", self._close_bmb_detail_window)
+
+        self._show_bmb_monthly_detail(self.bmb_detail_window, year, month_idx)
+
+    def _close_bmb_detail_window(self):
+        """Chiude la finestra di dettaglio mensile."""
+        if self.bmb_detail_window is not None and self.bmb_detail_window.winfo_exists():
+            self.bmb_detail_window.destroy()
+        self.bmb_detail_window = None
+        self._refocus_main()
+
+    def _show_bmb_monthly_detail(self, parent: tk.Toplevel, year: int, month_idx: int):
+        """Popola la finestra di dettaglio con le informazioni mensili."""
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        # Header con titolo e pulsante indietro
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x", pady=(0, 12))
+
+        month_name = MESI[month_idx - 1].capitalize()
+        title = f"{month_name} {year}"
+
+        tk.Label(
+             header_row,
+             text=f"Previsione Bondora - {title}",
+             font=("Segoe UI", 14, "bold"),
+             bg=BG_TABLE,
+             fg=FG_HEADER,
+         ).pack(side="left", anchor="w")
+
+        tk.Button(
+             header_row,
+             text="← Chiudi",
+             bg=BG_FRAME,
+             fg=FG,
+             activebackground=SEL_BG,
+             activeforeground=FG_HEADER,
+             relief="flat",
+             padx=10,
+             command=self._close_bmb_detail_window,
+         ).pack(side="right")
+
+        # Body con i dettagli
+        content = tk.Frame(wrapper, bg=BG_FRAME, padx=14, pady=14)
+        content.pack(fill="both", expand=True, pady=(12, 0))
+
+        monthly_info = self.bmb_monthly_data.get((year, month_idx), {})
+        monthly_gain = float(monthly_info.get("gain", 0.0) or 0.0)
+        start_of_month_value = float(monthly_info.get("start_balance", 0.0) or 0.0)
+        end_of_month_value = float(monthly_info.get("end_balance", 0.0) or 0.0)
+        source = str(monthly_info.get("source", "forecast") or "forecast")
+
+        # Infos principali
+        tk.Label(
+             content,
+             text="Saldo atteso Bondora a fine mese",
+             font=FONT_TAB,
+             bg=BG_FRAME,
+             fg=FG_HEADER,
+         ).pack(anchor="w", pady=(0, 4))
+
+        tk.Label(
+             content,
+             text=self._format_money_it(end_of_month_value),
+             font=("Segoe UI", 20, "bold"),
+             bg=BG_FRAME,
+             fg=FG_SOMMA,
+         ).pack(anchor="w", pady=(0, 12))
+
+        # Mostra i dettagli
+        details_frame = tk.Frame(content, bg=BG_FRAME)
+        details_frame.pack(fill="x", pady=(8, 0))
+
+        # Riga: Saldo inizio mese
+        row1 = tk.Frame(details_frame, bg=BG_FRAME)
+        row1.pack(fill="x", pady=(0, 8))
+        tk.Label(row1, text="Saldo inizio mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(row1, text=self._format_money_it(start_of_month_value), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        # Riga: Guadagno stimato mese
+        row2 = tk.Frame(details_frame, bg=BG_FRAME)
+        row2.pack(fill="x", pady=(0, 8))
+        tk.Label(row2, text="Guadagno mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(row2, text=self._format_money_it(monthly_gain), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        # Riga: Saldo fine mese
+        row3 = tk.Frame(details_frame, bg=BG_FRAME)
+        row3.pack(fill="x", pady=(0, 8))
+        tk.Label(row3, text="Saldo fine mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(row3, text=self._format_money_it(end_of_month_value), font=("Segoe UI", 11, "bold"), bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        # Divider
+        tk.Label(details_frame, text="", bg=BG_FRAME).pack(fill="x", pady=4)
+
+        # Informazioni aggiuntive
+        info_frame = tk.Frame(content, bg=BG_FRAME)
+        info_frame.pack(fill="both", expand=True, pady=(12, 0))
+
+        tk.Label(info_frame, text="Informazioni", font=FONT_TAB, bg=BG_FRAME, fg=FG_HEADER).pack(anchor="w", pady=(0, 8))
+
+        # Nota importante
+        source_text = {
+            "actual": "Dati storici registrati",
+            "actual+forecast": "Parte storica + parte previsionale",
+            "forecast": "Valore interamente previsionale",
+        }.get(source, "Valore previsionale")
+        note_text = (
+            "Dettaglio del mese selezionato:\n"
+            f"- Origine dato: {source_text}\n"
+            "- Simulazione senza nuovi versamenti\n"
+            "- Gli incrementi giornalieri seguono Bondora Evolution\n\n"
+            "Il saldo fine mese rappresenta la stima puntuale\n"
+            "per la chiusura del mese selezionato."
+        )
+        tk.Label(
+            info_frame,
+            text=note_text,
+            font=FONT_SMALL,
+            bg=BG_FRAME,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", fill="both", expand=True)
 
     def _go_to_mm_window(self):
         if self.mm_window is not None and self.mm_window.winfo_exists():
