@@ -2371,6 +2371,8 @@ class App(tk.Tk):
         end_year = date(today.year, 12, 31)
 
         current_amount, daily_rate = self._get_bondora_current_snapshot()
+        snapshot_amount = current_amount
+        simulated_amount = current_amount
         if current_amount <= 0.0 and daily_rate <= 0.0:
             return 0.0, 0.0, 0.0, "Dati Bondora non sufficienti per la previsione."
 
@@ -2665,18 +2667,18 @@ class App(tk.Tk):
         milestones.sort(key=lambda item: item[0])
 
         milestone_idx = 0
-        while milestone_idx < len(milestones) and current_amount + 1e-9 >= milestones[milestone_idx][0]:
+        while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
             daily_rate = max(daily_rate, milestones[milestone_idx][1])
             milestone_idx += 1
 
         end_date = date(end_year, 12, 31)
         for day_ord in range((today + timedelta(days=1)).toordinal(), end_date.toordinal() + 1):
-            while milestone_idx < len(milestones) and current_amount + 1e-9 >= milestones[milestone_idx][0]:
+            while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
                 daily_rate = max(daily_rate, milestones[milestone_idx][1])
                 milestone_idx += 1
 
             current_day = date.fromordinal(day_ord)
-            current_amount += daily_rate
+            simulated_amount += daily_rate
             key = (current_day.year, current_day.month)
             if key in monthly_projected:
                 monthly_projected[key] += daily_rate
@@ -2684,7 +2686,7 @@ class App(tk.Tk):
         current_year_actual = self._get_ctm_bondora_monthly_values_for_year(str(start_year))
 
         # Saldo di riferimento: cifra attuale Bondora. Da qui sommiamo i mesi previsionali.
-        forecast_balance_cursor = current_amount
+        forecast_balance_cursor = snapshot_amount
 
         rows: list[dict[str, object]] = []
         month_details: dict[tuple[int, int], dict[str, object]] = {}
