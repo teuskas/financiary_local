@@ -2371,8 +2371,6 @@ class App(tk.Tk):
         end_year = date(today.year, 12, 31)
 
         current_amount, daily_rate = self._get_bondora_current_snapshot()
-        snapshot_amount = current_amount
-        simulated_amount = current_amount
         if current_amount <= 0.0 and daily_rate <= 0.0:
             return 0.0, 0.0, 0.0, "Dati Bondora non sufficienti per la previsione."
 
@@ -2646,6 +2644,8 @@ class App(tk.Tk):
         end_year = start_year + horizon_years
 
         current_amount, daily_rate = self._get_bondora_current_snapshot()
+        snapshot_amount = current_amount
+        simulated_amount = current_amount
 
         monthly_projected: dict[tuple[int, int], float] = {
             (year, month): 0.0
