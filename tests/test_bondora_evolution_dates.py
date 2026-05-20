@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime, timedelta
 
 from parser_2026 import (
+    get_bondo_evo_days_completion,
+    get_bondo_evo_next_unreached_target,
     compute_bondo_evo_target_dates,
     get_euro_milestone_targets,
     get_bondo_evo_selectable_targets,
@@ -66,6 +68,32 @@ class BondoraEvolutionDatesTest(unittest.TestCase):
 
         self.assertEqual(get_bondo_evo_selectable_targets(none_reached), [0.50, 0.51])
         self.assertEqual(get_bondo_evo_selectable_targets(all_reached), [0.61])
+
+    def test_next_unreached_target_picks_smallest_remaining_days(self):
+        data = {
+            0.40: {"is_reached": True, "mdtns": None, "cap_pr": 100.0},
+            0.41: {"is_reached": False, "mdtns": 25.0, "cap_pr": 200.0},
+            0.42: {"is_reached": False, "mdtns": 9.0, "cap_pr": 220.0},
+            0.43: {"is_reached": False, "mdtns": 14.0, "cap_pr": 250.0},
+        }
+
+        next_target = get_bondo_evo_next_unreached_target(data)
+
+        self.assertIsNotNone(next_target)
+        daily, row = next_target
+        self.assertEqual(daily, 0.42)
+        self.assertEqual(row["mdtns"], 9.0)
+
+    def test_days_completion_clamps_values(self):
+        progress = get_bondo_evo_days_completion(dtns=120.0, mdtns=30.0)
+        self.assertEqual(progress["completed_days"], 90.0)
+        self.assertEqual(progress["remaining_days"], 30.0)
+        self.assertAlmostEqual(progress["completed_ratio"], 0.75)
+
+        over_remaining = get_bondo_evo_days_completion(dtns=10.0, mdtns=99.0)
+        self.assertEqual(over_remaining["completed_days"], 0.0)
+        self.assertEqual(over_remaining["remaining_days"], 10.0)
+        self.assertEqual(over_remaining["completed_ratio"], 0.0)
 
     def test_progressive_amount_targets_examples(self):
         self.assertEqual(get_progressive_amount_targets(2782.0, 10.0), [2790.0, 2800.0, 2810.0, 2820.0, 2830.0])

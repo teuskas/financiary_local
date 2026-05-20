@@ -780,6 +780,86 @@ def get_bondo_evo_selectable_targets(data: dict[float, dict]) -> list[float]:
     return selectable
 
 
+def get_bondo_evo_next_unreached_target(data: dict[float, dict]) -> tuple[float, dict[str, object]] | None:
+    """Restituisce il prossimo obiettivo non raggiunto (quello con meno giorni mancanti)."""
+    if not data:
+        return None
+
+    candidates: list[tuple[float, float, float]] = []
+    for daily_value, row in data.items():
+        if not isinstance(row, dict):
+            continue
+        if bool(row.get("is_reached", False)):
+            continue
+
+        mdtns = row.get("mdtns")
+        if mdtns is None:
+            continue
+
+        try:
+            mdtns_val = float(mdtns)
+            daily_val = float(daily_value)
+            cap_pr_val = float(row.get("cap_pr", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+
+        if mdtns_val < 0:
+            continue
+
+        candidates.append((mdtns_val, cap_pr_val, daily_val))
+
+    if not candidates:
+        return None
+
+    _, _, selected_daily = min(candidates, key=lambda item: (item[0], item[1], item[2]))
+    selected_row = data.get(selected_daily)
+    if not isinstance(selected_row, dict):
+        return None
+    return selected_daily, selected_row
+
+
+def get_bondo_evo_days_completion(dtns: float, mdtns: float | None) -> dict[str, float]:
+    """Calcola completamento in giorni per un target Bondora.
+
+    Ritorna un dizionario con:
+    - total_days: giorni totali previsti
+    - remaining_days: giorni mancanti (clamp >= 0)
+    - completed_days: giorni gia' coperti (clamp >= 0)
+    - completed_ratio: percentuale [0..1]
+    """
+    try:
+        total_days = float(dtns)
+    except (TypeError, ValueError):
+        total_days = 0.0
+
+    try:
+        remaining_days = float(mdtns) if mdtns is not None else 0.0
+    except (TypeError, ValueError):
+        remaining_days = 0.0
+
+    total_days = max(0.0, total_days)
+    remaining_days = max(0.0, remaining_days)
+
+    if total_days <= 0:
+        return {
+            "total_days": 0.0,
+            "remaining_days": remaining_days,
+            "completed_days": 0.0,
+            "completed_ratio": 0.0,
+        }
+
+    clamped_remaining = min(remaining_days, total_days)
+    completed_days = max(0.0, total_days - clamped_remaining)
+    completed_ratio = max(0.0, min(completed_days / total_days, 1.0))
+
+    return {
+        "total_days": total_days,
+        "remaining_days": clamped_remaining,
+        "completed_days": completed_days,
+        "completed_ratio": completed_ratio,
+    }
+
+
 def get_progressive_amount_targets(current_amount: float, step: float, count: int = 5) -> list[float]:
     """Restituisce i target progressivi successivi in base allo step scelto.
 

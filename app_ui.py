@@ -22,6 +22,8 @@ from parser_2026 import (get_tables, get_fixed_platform_goals, get_gt_anno_data,
                          get_total_monthly_comparison_data, get_monthly_comparison_total,
                          get_monthly_comparison_chart_points,
                          get_bondo_evo_selectable_targets,
+                          get_bondo_evo_next_unreached_target,
+                          get_bondo_evo_days_completion,
                          get_euro_milestone_targets,
                          get_progressive_amount_targets,
                          get_yearly_main_tables_data, get_fin_inv_debts,
@@ -130,8 +132,10 @@ class App(tk.Tk):
         self.bondo_evo_daily_cb: ttk.Combobox | None = None
         self.bondo_evo_data: dict[float, dict[str, object]] = {}
         self.bondo_evo_graph_canvas: tk.Canvas | None = None
+        self.bondo_evo_next_graph_canvas: tk.Canvas | None = None
         self.bondo_evo_info_frame: tk.Frame | None = None
         self.bondo_evo_info_frame: tk.Frame | None = None
+        self.bondo_evo_next_info_var = tk.StringVar(value="Prossimo obiettivo: in attesa dati")
 
         # Confronto mensile (GPP_ANNO)
         self.gpp_data: dict[str, object] = {}
@@ -1111,15 +1115,51 @@ class App(tk.Tk):
         self.bondo_evo_info_frame = tk.Frame(content, bg=BG_TABLE)
         self.bondo_evo_info_frame.pack(side="left", fill="both", padx=(0, 32))
 
-        # Canvas per il grafico a torta
+        charts_col = tk.Frame(content, bg=BG_TABLE)
+        charts_col.pack(side="left", fill="y", padx=(16, 0), pady=(0, 8))
+
+        tk.Label(
+            charts_col,
+            text="Completamento importo (obiettivo selezionato)",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(anchor="w")
+
         self.bondo_evo_graph_canvas = tk.Canvas(
-            content,
+            charts_col,
             width=GRAPH_CANVAS_W,
             height=GRAPH_CANVAS_H,
             bg=BG_TABLE,
             highlightthickness=0,
         )
-        self.bondo_evo_graph_canvas.pack(side="left", padx=(16, 0), pady=(0, 8))
+        self.bondo_evo_graph_canvas.pack(anchor="w", pady=(4, 16))
+
+        tk.Label(
+            charts_col,
+            text="Completamento giorni (prossimo obiettivo)",
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(anchor="w")
+
+        self.bondo_evo_next_graph_canvas = tk.Canvas(
+            charts_col,
+            width=GRAPH_CANVAS_W,
+            height=GRAPH_CANVAS_H,
+            bg=BG_TABLE,
+            highlightthickness=0,
+        )
+        self.bondo_evo_next_graph_canvas.pack(anchor="w", pady=(4, 4))
+
+        tk.Label(
+            charts_col,
+            textvariable=self.bondo_evo_next_info_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
 
     def _build_gt_anno_tab(self, parent: tk.Frame):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
@@ -1809,6 +1849,11 @@ class App(tk.Tk):
             return
         self._draw_pie_on_canvas(self.bondo_evo_graph_canvas, cap_pr, reached)
 
+    def _draw_bondo_evo_next_days_pie_chart(self, total_days: float, completed_days: float):
+        if self.bondo_evo_next_graph_canvas is None:
+            return
+        self._draw_pie_on_canvas(self.bondo_evo_next_graph_canvas, total_days, completed_days)
+
     def _refresh_bondo_evo_display(self):
         """Aggiorna la visualizzazione dei dettagli per il valore selezionato."""
         if self.bondo_evo_info_frame is None:
@@ -1857,6 +1902,26 @@ class App(tk.Tk):
         # Disegna il grafico a torta
         # Se l'obiettivo è raggiunto, la cifra attuale deve essere al 100% dell'obiettivo
         self._draw_bondo_evo_pie_chart(cap_pr, current_amount)
+
+        next_target = get_bondo_evo_next_unreached_target(self.bondo_evo_data)
+        if next_target is None:
+            self._draw_bondo_evo_next_days_pie_chart(1.0, 1.0)
+            self.bondo_evo_next_info_var.set("Prossimo obiettivo: tutti raggiunti (100%)")
+        else:
+            next_daily, next_row = next_target
+            progress = get_bondo_evo_days_completion(
+                dtns=float(next_row.get("dtns", 0.0) or 0.0),
+                mdtns=next_row.get("mdtns"),
+            )
+            self._draw_bondo_evo_next_days_pie_chart(
+                progress["total_days"],
+                progress["completed_days"],
+            )
+            self.bondo_evo_next_info_var.set(
+                f"Daily {self._format_number_it(next_daily)} €/giorno - "
+                f"Completamento: {progress['completed_ratio'] * 100:.1f}% "
+                f"({progress['completed_days']:.0f}/{progress['total_days']:.0f} giorni)"
+            )
 
         tk.Label(
             self.bondo_evo_info_frame,
