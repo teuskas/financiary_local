@@ -1804,16 +1804,23 @@ class App(tk.Tk):
 
         current_value = self.bondo_evo_daily_var.get()
         if sorted_display and current_value not in sorted_display:
-            self.bondo_evo_daily_var.set(sorted_display[0])
+            next_target = get_bondo_evo_next_unreached_target(self.bondo_evo_data)
+            if next_target is not None:
+                next_daily = float(next_target[0])
+                self.bondo_evo_daily_var.set(self._format_money_it(next_daily, prefix="€"))
+            else:
+                self.bondo_evo_daily_var.set(sorted_display[0])
 
-    def _draw_pie_on_canvas(self, canvas: tk.Canvas, cap_pr: float, reached: float):
+    def _draw_pie_on_canvas(self, canvas: tk.Canvas, cap_pr: float, reached: float, size_scale: float = 1.0):
         """Disegna un grafico a torta generico su qualsiasi canvas."""
         c = canvas
         c.delete("all")
-        cw = GRAPH_CANVAS_W
-        ch = GRAPH_CANVAS_H
+        cw = int(c.winfo_width() or c.winfo_reqwidth() or GRAPH_CANVAS_W)
+        ch = int(c.winfo_height() or c.winfo_reqheight() or GRAPH_CANVAS_H)
         cx, cy = cw // 2, ch // 2
-        diameter = min(PIE_MIN_DIAMETER, cw - PIE_MARGIN * 2)
+        scale = max(0.5, min(float(size_scale), 1.0))
+        base_diameter = min(PIE_MIN_DIAMETER, cw - PIE_MARGIN * 2)
+        diameter = max(96, int(base_diameter * scale))
         radius = diameter // 2
         x0 = cx - radius
         y0 = cy - radius
@@ -1827,11 +1834,7 @@ class App(tk.Tk):
         c.create_oval(x0, y0, x1, y1, fill=FG_RESIDUO, outline="")
         if extent > 0:
             c.create_arc(x0, y0, x1, y1, start=90, extent=-extent, fill=FG_SOMMA, outline="")
-        c.create_text(
-            (x0 + x1) / 2, (y0 + y1) / 2,
-            text=f"{completed_ratio * 100:.1f}%",
-            fill=FG_PERCENT, font=("Segoe UI", 18, "bold"),
-        )
+        c.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=f"{completed_ratio * 100:.1f}%", fill=FG_PERCENT, font=("Segoe UI", 18 if scale >= 0.95 else 15, "bold"))
         legend_y = min(ch - 14, y1 + 16)
         c.create_rectangle(40, legend_y - 7, 54, legend_y + 7, fill=FG_SOMMA, outline="")
         c.create_text(110, legend_y, text="Completato", fill=FG, font=FONT_SMALL)
@@ -1852,7 +1855,7 @@ class App(tk.Tk):
     def _draw_bondo_evo_next_days_pie_chart(self, total_days: float, completed_days: float):
         if self.bondo_evo_next_graph_canvas is None:
             return
-        self._draw_pie_on_canvas(self.bondo_evo_next_graph_canvas, total_days, completed_days)
+        self._draw_pie_on_canvas(self.bondo_evo_next_graph_canvas, total_days, completed_days, size_scale=0.72)
 
     def _refresh_bondo_evo_display(self):
         """Aggiorna la visualizzazione dei dettagli per il valore selezionato."""
@@ -1909,19 +1912,24 @@ class App(tk.Tk):
             self.bondo_evo_next_info_var.set("Prossimo obiettivo: tutti raggiunti (100%)")
         else:
             next_daily, next_row = next_target
-            progress = get_bondo_evo_days_completion(
-                dtns=float(next_row.get("dtns", 0.0) or 0.0),
-                mdtns=next_row.get("mdtns"),
-            )
-            self._draw_bondo_evo_next_days_pie_chart(
-                progress["total_days"],
-                progress["completed_days"],
-            )
-            self.bondo_evo_next_info_var.set(
-                f"Daily {self._format_number_it(next_daily)} €/giorno - "
-                f"Completamento: {progress['completed_ratio'] * 100:.1f}% "
-                f"({progress['completed_days']:.0f}/{progress['total_days']:.0f} giorni)"
-            )
+            if abs(float(next_daily) - float(daily_value)) < 1e-9:
+                progress = get_bondo_evo_days_completion(
+                    dtns=float(next_row.get("dtns", 0.0) or 0.0),
+                    mdtns=next_row.get("mdtns"),
+                )
+                self._draw_bondo_evo_next_days_pie_chart(
+                    progress["total_days"],
+                    progress["completed_days"],
+                )
+                self.bondo_evo_next_info_var.set(
+                    f"Prossimo obiettivo ({self._format_number_it(next_daily)} €/giorno): "
+                    f"{progress['completed_ratio'] * 100:.1f}% "
+                    f"({progress['completed_days']:.0f}/{progress['total_days']:.0f} giorni)"
+                )
+            else:
+                if self.bondo_evo_next_graph_canvas is not None:
+                    self.bondo_evo_next_graph_canvas.delete("all")
+                self.bondo_evo_next_info_var.set("Grafico giorni visibile solo sul prossimo obiettivo.")
 
         tk.Label(
             self.bondo_evo_info_frame,
