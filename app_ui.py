@@ -2805,13 +2805,21 @@ class App(tk.Tk):
         )
 
         years = sorted(yearly_data.keys())
-        cols = ["Metrica"] + [str(year) for year in years]
+        chunk_size = 10
+        year_chunks = [years[i:i + chunk_size] for i in range(0, len(years), chunk_size)]
+        total_rows = max((len(chunk) for chunk in year_chunks), default=0)
 
-        for col_idx, col_name in enumerate(cols):
-            self.icb_table_body.grid_columnconfigure(col_idx, minsize=120 if col_idx > 0 else 190, weight=0)
+        for block_idx, chunk in enumerate(year_chunks):
+            base_col = block_idx * 2
+            anno_col = base_col
+            cap_col = base_col + 1
+
+            self.icb_table_body.grid_columnconfigure(anno_col, minsize=90, weight=0)
+            self.icb_table_body.grid_columnconfigure(cap_col, minsize=170, weight=0)
+
             tk.Label(
                 self.icb_table_body,
-                text=col_name,
+                text="Anno",
                 font=FONT_TAB,
                 bg=BG_FRAME,
                 fg=FG_HEADER,
@@ -2820,34 +2828,54 @@ class App(tk.Tk):
                 anchor="center",
                 highlightthickness=1,
                 highlightbackground=BG,
-            ).grid(row=0, column=col_idx, sticky="nsew")
+            ).grid(row=0, column=anno_col, sticky="nsew")
 
-        tk.Label(
-            self.icb_table_body,
-            text="Capitale atteso fine anno",
-            font=("Segoe UI", 10, "bold"),
-            bg=BG_TABLE,
-            fg=FG_HEADER,
-            padx=10,
-            pady=8,
-            anchor="w",
-            highlightthickness=1,
-            highlightbackground=BG,
-        ).grid(row=1, column=0, sticky="nsew")
-
-        for col_idx, year in enumerate(years, start=1):
             tk.Label(
                 self.icb_table_body,
-                text=self._format_number_it(float(yearly_data.get(year, 0.0)), 2),
-                font=("Segoe UI", 10, "bold"),
-                bg=BG_TABLE,
-                fg=FG_SOMMA,
+                text="Capitale atteso",
+                font=FONT_TAB,
+                bg=BG_FRAME,
+                fg=FG_HEADER,
                 padx=10,
                 pady=8,
                 anchor="center",
                 highlightthickness=1,
                 highlightbackground=BG,
-            ).grid(row=1, column=col_idx, sticky="nsew")
+            ).grid(row=0, column=cap_col, sticky="nsew")
+
+            for row_idx in range(1, total_rows + 1):
+                has_data = row_idx <= len(chunk)
+                year_value = chunk[row_idx - 1] if has_data else ""
+                capital_value = (
+                    self._format_number_it(float(yearly_data.get(int(year_value), 0.0)), 2)
+                    if has_data else ""
+                )
+
+                tk.Label(
+                    self.icb_table_body,
+                    text=str(year_value),
+                    font=("Segoe UI", 10, "bold") if has_data else FONT_TABLE,
+                    bg=BG_TABLE,
+                    fg=FG_HEADER if has_data else FG,
+                    padx=10,
+                    pady=7,
+                    anchor="center",
+                    highlightthickness=1,
+                    highlightbackground=BG,
+                ).grid(row=row_idx, column=anno_col, sticky="nsew")
+
+                tk.Label(
+                    self.icb_table_body,
+                    text=capital_value,
+                    font=("Segoe UI", 10, "bold") if has_data else FONT_TABLE,
+                    bg=BG_TABLE,
+                    fg=FG_SOMMA if has_data else FG,
+                    padx=10,
+                    pady=7,
+                    anchor="center",
+                    highlightthickness=1,
+                    highlightbackground=BG,
+                ).grid(row=row_idx, column=cap_col, sticky="nsew")
 
         self.icb_table_body.update_idletasks()
         self.icb_table_canvas.configure(scrollregion=self.icb_table_canvas.bbox("all"))
