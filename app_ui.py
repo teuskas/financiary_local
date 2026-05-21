@@ -200,6 +200,13 @@ class App(tk.Tk):
         self.bmb_detail_window: tk.Toplevel | None = None
         self.bmb_monthly_data: dict[tuple[int, int], dict[str, object]] = {}
 
+        # Interesse composto Bondora
+        self.icb_window: tk.Toplevel | None = None
+        self.icb_hint_var = tk.StringVar(value="")
+        self.icb_table_canvas: tk.Canvas | None = None
+        self.icb_table_body: tk.Frame | None = None
+        self.icb_yearly_data: dict[int, float] = {}
+
         self.live_bm_value_var = tk.StringVar(value="EUR --")
         self.live_bmr_value_var = tk.StringVar(value="EUR --")
         self.live_bondora_value_var = tk.StringVar(value="EUR --")
@@ -1081,6 +1088,23 @@ class App(tk.Tk):
         )
         link_bondora_mensile.pack(side="top", anchor="w", padx=10, pady=(0, 8))
 
+        link_icb = tk.Button(
+            content,
+            text="Interesse Composto Bondora",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self._go_to_icb_window,
+        )
+        link_icb.pack(side="top", anchor="w", padx=10, pady=(0, 8))
+
     def _build_bondora_evolution_tab(self, parent,):
         wrapper = tk.Frame(parent, bg=BG_TABLE)
         wrapper.pack(fill="both", expand=True, padx=16, pady=16)
@@ -1360,6 +1384,8 @@ class App(tk.Tk):
         if self.ctm_graph_window is not None and self.ctm_graph_window.winfo_exists():
             self._init_ctm_graph_filters()
             self._render_ctm_graph()
+        if self.icb_window is not None and self.icb_window.winfo_exists():
+            self._render_icb_table()
         ts = datetime.now().strftime("%d/%m/%Y %H:%M")
         self.lbl_update.config(text=f"Aggiornato: {ts}")
 
@@ -2616,6 +2642,215 @@ class App(tk.Tk):
 
         self._build_bmb_window(self.bmb_window)
         self._render_bmb_table()
+
+    def _go_to_icb_window(self):
+        if self.icb_window is not None and self.icb_window.winfo_exists():
+            self.icb_window.deiconify()
+            self.icb_window.lift()
+            self.icb_window.focus_force()
+            self._render_icb_table()
+            return
+
+        self.icb_window = tk.Toplevel(self)
+        self.icb_window.title("Own Finance - Interesse composto Bondora")
+        self.icb_window.geometry("1320x360")
+        self.icb_window.configure(bg=BG_TABLE)
+        self.icb_window.minsize(900, 280)
+        self.icb_window.protocol("WM_DELETE_WINDOW", self._close_icb_window)
+
+        self._build_icb_window(self.icb_window)
+        self._render_icb_table()
+
+    def _close_icb_window(self):
+        if self.icb_window is not None and self.icb_window.winfo_exists():
+            self.icb_window.destroy()
+        self.icb_window = None
+        self.icb_table_canvas = None
+        self.icb_table_body = None
+        self._refocus_main()
+
+    def _build_icb_window(self, parent: tk.Toplevel):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text="Interesse composto Bondora",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Torna indietro",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_icb_window,
+        ).pack(side="right")
+
+        tk.Label(
+            wrapper,
+            textvariable=self.icb_hint_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", pady=(10, 8))
+
+        table_wrapper = tk.Frame(wrapper, bg=BG_TABLE)
+        table_wrapper.pack(fill="both", expand=True)
+
+        self.icb_table_canvas = tk.Canvas(table_wrapper, bg=BG_TABLE, highlightthickness=0)
+        vsb = ttk.Scrollbar(table_wrapper, orient="vertical", command=self.icb_table_canvas.yview)
+        hsb = ttk.Scrollbar(table_wrapper, orient="horizontal", command=self.icb_table_canvas.xview)
+        self.icb_table_canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        self.icb_table_canvas.pack(side="left", fill="both", expand=True)
+
+        self.icb_table_body = tk.Frame(self.icb_table_canvas, bg=BG_TABLE)
+        window_id = self.icb_table_canvas.create_window((0, 0), window=self.icb_table_body, anchor="nw")
+
+        def _refresh_scrollregion(_event=None):
+            if self.icb_table_canvas is not None:
+                self.icb_table_canvas.configure(scrollregion=self.icb_table_canvas.bbox("all"))
+
+        def _sync_width(event):
+            if self.icb_table_canvas is None or self.icb_table_body is None:
+                return
+            requested = self.icb_table_body.winfo_reqwidth()
+            self.icb_table_canvas.itemconfigure(window_id, width=max(event.width, requested))
+
+        self.icb_table_body.bind("<Configure>", _refresh_scrollregion)
+        self.icb_table_canvas.bind("<Configure>", _sync_width)
+
+    def _calculate_bondora_compound_yearly_to_2050(self) -> dict[int, float]:
+        today = date.today()
+        if today.year > 2050:
+            return {}
+
+        current_amount, daily_rate = self._get_bondora_current_snapshot()
+        if current_amount <= 0.0 and daily_rate <= 0.0:
+            return {}
+
+        milestones: list[tuple[float, float]] = []
+        for daily, row in self.bondo_evo_data.items():
+            cap_pr = row.get("cap_pr")
+            try:
+                cap_pr_value = float(cap_pr)
+                daily_value = float(daily)
+            except (TypeError, ValueError):
+                continue
+            if cap_pr_value <= 0.0 or daily_value <= 0.0:
+                continue
+            milestones.append((cap_pr_value, daily_value))
+        milestones.sort(key=lambda item: item[0])
+
+        simulated_amount = current_amount
+        milestone_idx = 0
+        while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+            daily_rate = max(daily_rate, milestones[milestone_idx][1])
+            milestone_idx += 1
+
+        yearly_data: dict[int, float] = {}
+        cursor = today
+        for year in range(today.year, 2051):
+            year_end = date(year, 12, 31)
+            for day_ord in range((cursor + timedelta(days=1)).toordinal(), year_end.toordinal() + 1):
+                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+                    daily_rate = max(daily_rate, milestones[milestone_idx][1])
+                    milestone_idx += 1
+                simulated_amount += daily_rate
+            yearly_data[year] = simulated_amount
+            cursor = year_end
+
+        return yearly_data
+
+    def _render_icb_table(self):
+        if self.icb_table_body is None or self.icb_table_canvas is None:
+            return
+
+        for child in self.icb_table_body.winfo_children():
+            child.destroy()
+
+        yearly_data = self._calculate_bondora_compound_yearly_to_2050()
+        self.icb_yearly_data = yearly_data
+
+        if not yearly_data:
+            self.icb_hint_var.set("Dati Bondora non sufficienti per il calcolo dell'interesse composto.")
+            tk.Label(
+                self.icb_table_body,
+                text="Nessun dato disponibile.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack(anchor="w", padx=10, pady=10)
+            return
+
+        start_amount, start_daily = self._get_bondora_current_snapshot()
+        self.icb_hint_var.set(
+            "Capitale calcolato partendo dalla cifra Bondora attuale e simulando la crescita giornaliera. "
+            "Orizzonte: fino al 2050. "
+            f"Base attuale: {self._format_money_it(start_amount)} | Daily corrente: "
+            f"{self._format_money_it(start_daily, prefix='EUR/giorno')}"
+        )
+
+        years = sorted(yearly_data.keys())
+        cols = ["Metrica"] + [str(year) for year in years]
+
+        for col_idx, col_name in enumerate(cols):
+            self.icb_table_body.grid_columnconfigure(col_idx, minsize=120 if col_idx > 0 else 190, weight=0)
+            tk.Label(
+                self.icb_table_body,
+                text=col_name,
+                font=FONT_TAB,
+                bg=BG_FRAME,
+                fg=FG_HEADER,
+                padx=10,
+                pady=8,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=0, column=col_idx, sticky="nsew")
+
+        tk.Label(
+            self.icb_table_body,
+            text="Capitale atteso fine anno",
+            font=("Segoe UI", 10, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+            padx=10,
+            pady=8,
+            anchor="w",
+            highlightthickness=1,
+            highlightbackground=BG,
+        ).grid(row=1, column=0, sticky="nsew")
+
+        for col_idx, year in enumerate(years, start=1):
+            tk.Label(
+                self.icb_table_body,
+                text=self._format_number_it(float(yearly_data.get(year, 0.0)), 2),
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_SOMMA,
+                padx=10,
+                pady=8,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=1, column=col_idx, sticky="nsew")
+
+        self.icb_table_body.update_idletasks()
+        self.icb_table_canvas.configure(scrollregion=self.icb_table_canvas.bbox("all"))
 
     def _close_bmb_window(self):
         if self.bmb_window is not None and self.bmb_window.winfo_exists():
