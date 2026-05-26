@@ -136,6 +136,7 @@ class App(tk.Tk):
         self.bondo_evo_info_frame: tk.Frame | None = None
         self.bondo_evo_info_frame: tk.Frame | None = None
         self.bondo_evo_next_info_var = tk.StringVar(value="Prossimo obiettivo: in attesa dati")
+        self._bondo_evo_redraw_job: str | None = None
 
         # Confronto mensile (GPP_ANNO)
         self.gpp_data: dict[str, object] = {}
@@ -325,6 +326,7 @@ class App(tk.Tk):
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
 
         self.table_views: dict[str, dict[str, tk.Widget]] = {}
         self.tab_frames: dict[str, tk.Frame] = {}
@@ -1158,6 +1160,7 @@ class App(tk.Tk):
             highlightthickness=0,
         )
         self.bondo_evo_graph_canvas.pack(anchor="w", pady=(4, 16))
+        self.bondo_evo_graph_canvas.bind("<Configure>", lambda _e: self._schedule_bondo_evo_redraw())
 
         tk.Label(
             charts_col,
@@ -1175,6 +1178,7 @@ class App(tk.Tk):
             highlightthickness=0,
         )
         self.bondo_evo_next_graph_canvas.pack(anchor="w", pady=(4, 4))
+        self.bondo_evo_next_graph_canvas.bind("<Configure>", lambda _e: self._schedule_bondo_evo_redraw())
 
         tk.Label(
             charts_col,
@@ -1837,12 +1841,44 @@ class App(tk.Tk):
             else:
                 self.bondo_evo_daily_var.set(sorted_display[0])
 
+    def _on_notebook_tab_changed(self, _event=None):
+        if self._is_bondora_evolution_tab_selected():
+            self._schedule_bondo_evo_redraw()
+
+    def _is_bondora_evolution_tab_selected(self) -> bool:
+        frame = self.tab_frames.get("bondora_evolution")
+        if frame is None or not hasattr(self, "notebook"):
+            return False
+        try:
+            return self.notebook.select() == str(frame)
+        except tk.TclError:
+            return False
+
+    def _schedule_bondo_evo_redraw(self):
+        if not self.bondo_evo_data or not self.bondo_evo_daily_var.get().strip():
+            return
+        if self._bondo_evo_redraw_job is not None:
+            try:
+                self.after_cancel(self._bondo_evo_redraw_job)
+            except tk.TclError:
+                pass
+        self._bondo_evo_redraw_job = self.after_idle(self._redraw_bondo_evo_if_visible)
+
+    def _redraw_bondo_evo_if_visible(self):
+        self._bondo_evo_redraw_job = None
+        if self._is_bondora_evolution_tab_selected():
+            self._refresh_bondo_evo_display()
+
     def _draw_pie_on_canvas(self, canvas: tk.Canvas, cap_pr: float, reached: float, size_scale: float = 1.0):
         """Disegna un grafico a torta generico su qualsiasi canvas."""
         c = canvas
         c.delete("all")
-        cw = int(c.winfo_width() or c.winfo_reqwidth() or GRAPH_CANVAS_W)
-        ch = int(c.winfo_height() or c.winfo_reqheight() or GRAPH_CANVAS_H)
+        cw = int(c.winfo_width() or 0)
+        ch = int(c.winfo_height() or 0)
+        if cw <= 2:
+            cw = int(c.winfo_reqwidth() or GRAPH_CANVAS_W)
+        if ch <= 2:
+            ch = int(c.winfo_reqheight() or GRAPH_CANVAS_H)
         cx, cy = cw // 2, ch // 2
         scale = max(0.5, min(float(size_scale), 1.0))
         base_diameter = min(PIE_MIN_DIAMETER, cw - PIE_MARGIN * 2)
@@ -1906,6 +1942,13 @@ class App(tk.Tk):
         data = self.bondo_evo_data.get(daily_value)
         if not data:
             return
+
+        if self._bondo_evo_redraw_job is not None:
+            try:
+                self.after_cancel(self._bondo_evo_redraw_job)
+            except tk.TclError:
+                pass
+            self._bondo_evo_redraw_job = None
 
         cap_pr = float(data.get("cap_pr", 0.0) or 0.0)
         dtns = float(data.get("dtns", 0.0) or 0.0)
