@@ -3111,6 +3111,24 @@ class App(tk.Tk):
                 "new_daily_rate": new_rate,
                 "target_capital": target_capital,
             })
+        monthly_rate_changes: dict[tuple[int, int], list[dict[str, object]]] = {
+            (year, month): []
+            for year in range(start_year, end_year + 1)
+            for month in range(1, 13)
+        }
+
+        def _register_rate_change(change_day: date, old_rate: float, new_rate: float, target_capital: float | None = None):
+            if new_rate <= old_rate + 1e-9:
+                return
+            key = (change_day.year, change_day.month)
+            if key not in monthly_rate_changes:
+                return
+            monthly_rate_changes[key].append({
+                "date": change_day,
+                "old_daily_rate": old_rate,
+                "new_daily_rate": new_rate,
+                "target_capital": target_capital,
+            })
 
         milestones: list[tuple[float, float]] = []
         for daily, row in self.bondo_evo_data.items():
@@ -3748,6 +3766,24 @@ class App(tk.Tk):
             for year in range(start_year, end_year + 1)
             for month in range(1, 13)
         }
+        monthly_rate_changes: dict[tuple[int, int], list[dict[str, object]]] = {
+            (year, month): []
+            for year in range(start_year, end_year + 1)
+            for month in range(1, 13)
+        }
+
+        def _register_rate_change(change_day: date, old_rate: float, new_rate: float, target_capital: float | None = None):
+            if new_rate <= old_rate + 1e-9:
+                return
+            key = (change_day.year, change_day.month)
+            if key not in monthly_rate_changes:
+                return
+            monthly_rate_changes[key].append({
+                "date": change_day,
+                "old_daily_rate": old_rate,
+                "new_daily_rate": new_rate,
+                "target_capital": target_capital,
+            })
 
         end_date = date(end_year, 12, 31)
         
