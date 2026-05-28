@@ -1090,6 +1090,23 @@ class App(tk.Tk):
         )
         link_bondora_mensile.pack(side="top", anchor="w", padx=10, pady=(0, 8))
 
+        link_bondora_con_aggiunta = tk.Button(
+            content,
+            text="Previsionale Bondora con aggiunta",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            cursor="hand2",
+            command=self._go_to_pbca_window,
+        )
+        link_bondora_con_aggiunta.pack(side="top", anchor="w", padx=10, pady=(0, 8))
+
         link_icb = tk.Button(
             content,
             text="Interesse Composto Bondora",
@@ -3378,6 +3395,658 @@ class App(tk.Tk):
             "  e sommando i previsionali dei mesi successivi\n"
             "- Simulazione senza nuovi versamenti\n"
             "- Gli incrementi giornalieri seguono Bondora Evolution\n\n"
+            "Il saldo fine mese rappresenta la stima puntuale\n"
+            "per la chiusura del mese selezionato."
+        )
+        tk.Label(
+            info_frame,
+            text=note_text,
+            font=FONT_SMALL,
+            bg=BG_FRAME,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", fill="both", expand=True)
+
+    def _go_to_pbca_window(self):
+        if self.pbca_window is not None and self.pbca_window.winfo_exists():
+            self.pbca_window.deiconify()
+            self.pbca_window.lift()
+            self.pbca_window.focus_force()
+            self._render_pbca_table()
+            return
+
+        self.pbca_window = tk.Toplevel(self)
+        self.pbca_window.title("Own Finance - Previsionale Bondora con aggiunta")
+        self.pbca_window.geometry("1480x560")
+        self.pbca_window.configure(bg=BG_TABLE)
+        self.pbca_window.minsize(1100, 420)
+        self.pbca_window.protocol("WM_DELETE_WINDOW", self._close_pbca_window)
+
+        self._build_pbca_window(self.pbca_window)
+        self._render_pbca_table()
+
+    def _close_pbca_window(self):
+        if self.pbca_window is not None and self.pbca_window.winfo_exists():
+            self.pbca_window.destroy()
+        self.pbca_window = None
+        self.pbca_table_canvas = None
+        self.pbca_table_body = None
+        self._refocus_main()
+
+    def _build_pbca_window(self, parent: tk.Toplevel):
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x")
+
+        tk.Label(
+            header_row,
+            text="Previsionale Bondora con aggiunta",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Torna indietro",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_pbca_window,
+        ).pack(side="right")
+
+        controls = tk.Frame(wrapper, bg=BG_TABLE)
+        controls.pack(fill="x", pady=(14, 0))
+
+        tk.Label(controls, text="Data aggiunta", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        date_entry = tk.Entry(
+            controls,
+            textvariable=self.pbca_selected_date_var,
+            width=14,
+            bg=BG_FRAME,
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            font=FONT_TABLE,
+        )
+        date_entry.pack(side="left", padx=(8, 2))
+        date_entry.insert(0, date.today().strftime("%d/%m/%Y"))
+
+        tk.Button(
+            controls,
+            text="📅",
+            font=FONT_SMALL,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=3,
+            cursor="hand2",
+            command=lambda: self._open_date_picker_pbca(date_entry),
+        ).pack(side="left", padx=(0, 16))
+
+        tk.Label(controls, text="Importo aggiunto (€)", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(side="left")
+        amount_entry = tk.Entry(
+            controls,
+            textvariable=self.pbca_amount_var,
+            width=14,
+            bg=BG_FRAME,
+            fg=FG,
+            insertbackground=FG,
+            relief="flat",
+            font=FONT_TABLE,
+        )
+        amount_entry.pack(side="left", padx=(8, 10))
+
+        tk.Button(
+            controls,
+            text="🔄 Calcola",
+            font=FONT_TAB,
+            fg=FG_HEADER,
+            bg=BG_FRAME,
+            activeforeground=FG_HEADER,
+            activebackground=SEL_BG,
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=6,
+            cursor="hand2",
+            command=self._render_pbca_table,
+        ).pack(side="left", padx=(0, 0))
+
+        tk.Label(
+            wrapper,
+            textvariable=self.pbca_hint_var,
+            font=FONT_SMALL,
+            bg=BG_TABLE,
+            fg=FG,
+            justify="left",
+        ).pack(anchor="w", pady=(10, 8))
+
+        table_wrapper = tk.Frame(wrapper, bg=BG_TABLE)
+        table_wrapper.pack(fill="both", expand=True)
+
+        self.pbca_table_canvas = tk.Canvas(table_wrapper, bg=BG_TABLE, highlightthickness=0)
+        vsb = ttk.Scrollbar(table_wrapper, orient="vertical", command=self.pbca_table_canvas.yview)
+        hsb = ttk.Scrollbar(table_wrapper, orient="horizontal", command=self.pbca_table_canvas.xview)
+        self.pbca_table_canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        self.pbca_table_canvas.pack(side="left", fill="both", expand=True)
+
+        self.pbca_table_body = tk.Frame(self.pbca_table_canvas, bg=BG_TABLE)
+        window_id = self.pbca_table_canvas.create_window((0, 0), window=self.pbca_table_body, anchor="nw")
+
+        def _refresh_scrollregion(_event=None):
+            if self.pbca_table_canvas is not None:
+                self.pbca_table_canvas.configure(scrollregion=self.pbca_table_canvas.bbox("all"))
+
+        def _sync_width(event):
+            if self.pbca_table_canvas is None or self.pbca_table_body is None:
+                return
+            requested = self.pbca_table_body.winfo_reqwidth()
+            self.pbca_table_canvas.itemconfigure(window_id, width=max(event.width, requested))
+
+        self.pbca_table_body.bind("<Configure>", _refresh_scrollregion)
+        self.pbca_table_canvas.bind("<Configure>", _sync_width)
+
+    def _open_date_picker_pbca(self, date_entry: tk.Entry):
+        """Apre un semplice calendario per selezionare la data."""
+        date_picker = tk.Toplevel(self)
+        date_picker.title("Seleziona data")
+        date_picker.geometry("320x250")
+        date_picker.configure(bg=BG_TABLE)
+        date_picker.resizable(False, False)
+
+        try:
+            current_date_str = self.pbca_selected_date_var.get().strip()
+            if "/" in current_date_str:
+                parts = current_date_str.split("/")
+                current_date = date(int(parts[2]), int(parts[1]), int(parts[0]))
+            else:
+                current_date = date.today()
+        except (ValueError, IndexError):
+            current_date = date.today()
+
+        year_var = tk.StringVar(value=str(current_date.year))
+        month_var = tk.StringVar(value=str(current_date.month))
+        day_var = tk.StringVar(value=str(current_date.day))
+
+        frame = tk.Frame(date_picker, bg=BG_TABLE)
+        frame.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(frame, text="Anno", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(anchor="w")
+        year_sb = ttk.Spinbox(
+            frame,
+            from_=2000,
+            to=2100,
+            textvariable=year_var,
+            width=10,
+        )
+        year_sb.pack(anchor="w", pady=(2, 12))
+
+        tk.Label(frame, text="Mese", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(anchor="w")
+        month_sb = ttk.Spinbox(
+            frame,
+            from_=1,
+            to=12,
+            textvariable=month_var,
+            width=10,
+        )
+        month_sb.pack(anchor="w", pady=(2, 12))
+
+        tk.Label(frame, text="Giorno", font=FONT_SMALL, bg=BG_TABLE, fg=FG_HEADER).pack(anchor="w")
+        day_sb = ttk.Spinbox(
+            frame,
+            from_=1,
+            to=31,
+            textvariable=day_var,
+            width=10,
+        )
+        day_sb.pack(anchor="w", pady=(2, 12))
+
+        def _on_ok():
+            try:
+                year = int(year_var.get())
+                month = int(month_var.get())
+                day = int(day_var.get())
+                selected = date(year, month, day)
+                self.pbca_selected_date_var.set(selected.strftime("%d/%m/%Y"))
+                date_picker.destroy()
+            except ValueError:
+                messagebox.showerror("Errore", "Data non valida.")
+
+        ok_btn = tk.Button(
+            frame,
+            text="OK",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=14,
+            pady=6,
+            command=_on_ok,
+        )
+        ok_btn.pack(anchor="e", pady=(12, 0))
+
+    def _calculate_bondora_monthly_forecast_rows_with_addition(
+        self,
+        selected_date: date,
+        addition_amount: float,
+        horizon_years: int = 10,
+    ) -> tuple[list[dict[str, object]], dict[tuple[int, int], dict[str, object]]]:
+        """Calcola il previsionale mensile Bondora con un'aggiunta una tantum in una data specifica.
+        
+        La logica è la stessa di Previsionale mensile Bondora, ma il saldo viene aumentato di addition_amount
+        nel mese della data selezionata.
+        
+        Args:
+            selected_date: Data in cui è stata aggiunta la cifra
+            addition_amount: Importo aggiunto
+            horizon_years: Numero di anni da proiettare
+        """
+        today = date.today()
+        start_year = today.year
+        end_year = start_year + horizon_years
+
+        current_amount, daily_rate = self._get_bondora_current_snapshot()
+        snapshot_amount = current_amount
+        simulated_amount = current_amount
+
+        monthly_projected: dict[tuple[int, int], float] = {
+            (year, month): 0.0
+            for year in range(start_year, end_year + 1)
+            for month in range(1, 13)
+        }
+
+        milestones: list[tuple[float, float]] = []
+        for daily, row in self.bondo_evo_data.items():
+            cap_pr = row.get("cap_pr")
+            try:
+                cap_pr_value = float(cap_pr)
+                daily_value = float(daily)
+            except (TypeError, ValueError):
+                continue
+            if cap_pr_value <= 0.0 or daily_value <= 0.0:
+                continue
+            milestones.append((cap_pr_value, daily_value))
+        milestones.sort(key=lambda item: item[0])
+
+        milestone_idx = 0
+        while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+            daily_rate = max(daily_rate, milestones[milestone_idx][1])
+            milestone_idx += 1
+
+        end_date = date(end_year, 12, 31)
+        for day_ord in range((today + timedelta(days=1)).toordinal(), end_date.toordinal() + 1):
+            while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+                daily_rate = max(daily_rate, milestones[milestone_idx][1])
+                milestone_idx += 1
+
+            current_day = date.fromordinal(day_ord)
+            simulated_amount += daily_rate
+            key = (current_day.year, current_day.month)
+            if key in monthly_projected:
+                monthly_projected[key] += daily_rate
+
+        current_year_actual = self._get_ctm_bondora_monthly_values_for_year(str(start_year))
+
+        # Saldo di riferimento: cifra attuale Bondora
+        forecast_balance_cursor = snapshot_amount
+
+        rows: list[dict[str, object]] = []
+        month_details: dict[tuple[int, int], dict[str, object]] = {}
+        for year in range(start_year, end_year + 1):
+            monthly_values: dict[str, float] = {}
+            for month_idx, month_name in enumerate(MESI, start=1):
+                projected_value = float(monthly_projected.get((year, month_idx), 0.0))
+                actual_value = 0.0
+                source = "forecast"
+
+                if year == start_year:
+                    actual_value = float(current_year_actual.get(month_name, 0.0) or 0.0)
+                    if month_idx < today.month:
+                        # Mesi passati: usa i dati reali
+                        value = actual_value
+                        source = "actual"
+                    elif month_idx == today.month:
+                        # Mese corrente: combina reale + proiezione
+                        value = actual_value + projected_value
+                        source = "actual+forecast" if actual_value > 0.0 else "forecast"
+                    else:
+                        # Mesi futuri: proiezione
+                        value = projected_value
+                else:
+                    value = projected_value
+
+                # Determina se la proiezione è disponibile per il calcolo del saldo
+                projection_available = year > start_year or (year == start_year and month_idx >= today.month)
+                
+                # Per il calcolo del saldo
+                projected_for_balance = projected_value if projection_available else 0.0
+                
+                # Aggiungi l'importo se siamo nel mese della data selezionata e in futuro rispetto a oggi
+                addition_for_this_month = 0.0
+                if selected_date.year == year and selected_date.month == month_idx:
+                    if month_idx >= today.month or year > start_year:
+                        addition_for_this_month = addition_amount
+                        source = "forecast+addition"
+
+                month_start = None
+                month_end = None
+                if projection_available:
+                    month_start = forecast_balance_cursor
+                    month_end = month_start + projected_for_balance + addition_for_this_month
+                    forecast_balance_cursor = month_end
+
+                monthly_values[month_name] = value + addition_for_this_month
+                month_details[(year, month_idx)] = {
+                    "year": year,
+                    "month_idx": month_idx,
+                    "month_name": month_name,
+                    "gain": value + addition_for_this_month,
+                    "actual_gain": actual_value,
+                    "projected_gain": projected_value + addition_for_this_month,
+                    "projected_gain_used": projected_for_balance + addition_for_this_month,
+                    "start_balance": month_start,
+                    "end_balance": month_end,
+                    "projection_available": projection_available,
+                    "source": source,
+                }
+
+            annual_total = sum(monthly_values.values())
+            rows.append({"year": year, "monthly": monthly_values, "annual_total": annual_total})
+
+        return rows, month_details
+
+    def _render_pbca_table(self):
+        if self.pbca_table_body is None or self.pbca_table_canvas is None:
+            return
+
+        for child in self.pbca_table_body.winfo_children():
+            child.destroy()
+
+        # Parse date and amount
+        try:
+            date_str = self.pbca_selected_date_var.get().strip()
+            if "/" in date_str:
+                parts = date_str.split("/")
+                selected_date = date(int(parts[2]), int(parts[1]), int(parts[0]))
+            else:
+                selected_date = date.today()
+        except (ValueError, IndexError):
+            self.pbca_hint_var.set("Errore: data non valida. Formato: DD/MM/YYYY")
+            return
+
+        try:
+            amount_str = self.pbca_amount_var.get().strip()
+            addition_amount = float(self._parse_localized_number(amount_str) or 0.0)
+            if addition_amount <= 0:
+                self.pbca_hint_var.set("Errore: importo deve essere positivo.")
+                return
+        except (ValueError, TypeError):
+            self.pbca_hint_var.set("Errore: importo non valido.")
+            return
+
+        rows, month_details = self._calculate_bondora_monthly_forecast_rows_with_addition(
+            selected_date=selected_date,
+            addition_amount=addition_amount,
+            horizon_years=10
+        )
+        today = date.today()
+        self.pbca_monthly_data = month_details
+
+        if not rows:
+            self.pbca_hint_var.set("Nessun dato disponibile per il previsionale.")
+            tk.Label(
+                self.pbca_table_body,
+                text="Nessun dato disponibile.",
+                bg=BG_TABLE,
+                fg=FG_ACCENT,
+                font=FONT_TABLE,
+            ).pack(anchor="w", padx=10, pady=10)
+            return
+
+        self.pbca_hint_var.set(
+            f"Previsionale con aggiunta di {self._format_money_it(addition_amount)} del {selected_date.strftime('%d/%m/%Y')}. "
+            "Mesi già trascorsi dell'anno corrente evidenziati in verde. "
+            "Passa con il mouse su un valore mensile per visualizzare il saldo."
+        )
+
+        cols = ["Anno"] + [month.capitalize() for month in MESI] + ["Totale"]
+        for col_idx, col_name in enumerate(cols):
+            width = 90 if col_name == "Anno" else (120 if col_name == "Totale" else 96)
+            self.pbca_table_body.grid_columnconfigure(col_idx, minsize=width, weight=0)
+            tk.Label(
+                self.pbca_table_body,
+                text=col_name,
+                font=FONT_TAB,
+                bg=BG_FRAME,
+                fg=FG_HEADER,
+                padx=10,
+                pady=8,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=0, column=col_idx, sticky="nsew")
+
+        past_month_bg = "#355d45"
+        for row_idx, row in enumerate(rows, start=1):
+            year_value = int(row.get("year", 0) or 0)
+            monthly = row.get("monthly", {}) if isinstance(row.get("monthly", {}), dict) else {}
+            annual_total = float(row.get("annual_total", 0.0) or 0.0)
+
+            tk.Label(
+                self.pbca_table_body,
+                text=str(year_value),
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_HEADER,
+                padx=10,
+                pady=6,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=row_idx, column=0, sticky="nsew")
+
+            for month_idx, month_name in enumerate(MESI, start=1):
+                month_value = float(monthly.get(month_name, 0.0) or 0.0)
+                is_past_current_year = year_value == today.year and month_idx < today.month
+                cell_bg = past_month_bg if is_past_current_year else BG_TABLE
+                cell_fg = FG_SOMMA if month_value > 0 else FG
+
+                month_label = tk.Label(
+                    self.pbca_table_body,
+                    text=self._format_number_it(month_value, 2),
+                    font=FONT_SMALL,
+                    bg=cell_bg,
+                    fg=cell_fg,
+                    padx=8,
+                    pady=6,
+                    anchor="center",
+                    highlightthickness=1,
+                    highlightbackground=BG,
+                    cursor="hand2",
+                )
+                month_label.grid(row=row_idx, column=month_idx, sticky="nsew")
+                month_label.bind(
+                    "<Enter>",
+                    lambda e, y=year_value, m=month_idx: self._open_pbca_detail_window(y, m, e.x_root, e.y_root),
+                )
+                month_label.bind("<Leave>", lambda _e: self._close_pbca_detail_window(refocus=False))
+
+            tk.Label(
+                self.pbca_table_body,
+                text=self._format_number_it(annual_total, 2),
+                font=("Segoe UI", 10, "bold"),
+                bg=BG_TABLE,
+                fg=FG_HEADER,
+                padx=10,
+                pady=6,
+                anchor="center",
+                highlightthickness=1,
+                highlightbackground=BG,
+            ).grid(row=row_idx, column=len(cols) - 1, sticky="nsew")
+
+        self.pbca_table_body.update_idletasks()
+        self.pbca_table_canvas.configure(scrollregion=self.pbca_table_canvas.bbox("all"))
+
+    def _open_pbca_detail_window(self, year: int, month_idx: int, x_root: int | None = None, y_root: int | None = None):
+        """Apre una finestra con i dettagli della previsione mensile con aggiunta."""
+        if self.pbca_detail_window is not None and self.pbca_detail_window.winfo_exists():
+            self.pbca_detail_window.destroy()
+
+        pos_x = (x_root + 18) if x_root is not None else 220
+        pos_y = (y_root + 14) if y_root is not None else 220
+
+        self.pbca_detail_window = tk.Toplevel(self)
+        self.pbca_detail_window.title("Own Finance - Dettaglio previsione Bondora con aggiunta")
+        self.pbca_detail_window.geometry(f"600x400+{pos_x}+{pos_y}")
+        self.pbca_detail_window.configure(bg=BG_TABLE)
+        self.pbca_detail_window.minsize(500, 300)
+        self.pbca_detail_window.protocol("WM_DELETE_WINDOW", lambda: self._close_pbca_detail_window(refocus=False))
+
+        self._show_pbca_monthly_detail(self.pbca_detail_window, year, month_idx)
+
+    def _close_pbca_detail_window(self, refocus: bool = True):
+        """Chiude la finestra di dettaglio mensile."""
+        if self.pbca_detail_window is not None and self.pbca_detail_window.winfo_exists():
+            self.pbca_detail_window.destroy()
+        self.pbca_detail_window = None
+        if refocus:
+            self._refocus_main()
+
+    def _show_pbca_monthly_detail(self, parent: tk.Toplevel, year: int, month_idx: int):
+        """Popola la finestra di dettaglio con le informazioni mensili."""
+        wrapper = tk.Frame(parent, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        # Header
+        header_row = tk.Frame(wrapper, bg=BG_TABLE)
+        header_row.pack(fill="x", pady=(0, 12))
+
+        month_name = MESI[month_idx - 1].capitalize()
+        title = f"{month_name} {year}"
+
+        tk.Label(
+            header_row,
+            text=f"Previsione Bondora - {title}",
+            font=("Segoe UI", 14, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+        ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="← Chiudi",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._close_pbca_detail_window,
+        ).pack(side="right")
+
+        # Body
+        content = tk.Frame(wrapper, bg=BG_FRAME, padx=14, pady=14)
+        content.pack(fill="both", expand=True, pady=(12, 0))
+
+        monthly_info = self.pbca_monthly_data.get((year, month_idx), {})
+        monthly_gain = float(monthly_info.get("gain", 0.0) or 0.0)
+        projected_gain = float(monthly_info.get("projected_gain", 0.0) or 0.0)
+        projected_gain_used = float(monthly_info.get("projected_gain_used", 0.0) or 0.0)
+        projection_available = bool(monthly_info.get("projection_available", False))
+        start_raw = monthly_info.get("start_balance", None)
+        end_raw = monthly_info.get("end_balance", None)
+        start_of_month_value = float(start_raw) if isinstance(start_raw, (int, float)) else 0.0
+        end_of_month_value = float(end_raw) if isinstance(end_raw, (int, float)) else 0.0
+        source = str(monthly_info.get("source", "forecast") or "forecast")
+
+        headline_value = self._format_money_it(end_of_month_value) if projection_available else "N/D (mese storico)"
+
+        tk.Label(
+            content,
+            text="Saldo atteso Bondora a fine mese",
+            font=FONT_TAB,
+            bg=BG_FRAME,
+            fg=FG_HEADER,
+        ).pack(anchor="w", pady=(0, 4))
+
+        tk.Label(
+            content,
+            text=headline_value,
+            font=("Segoe UI", 20, "bold"),
+            bg=BG_FRAME,
+            fg=FG_SOMMA,
+        ).pack(anchor="w", pady=(0, 12))
+
+        details_frame = tk.Frame(content, bg=BG_FRAME)
+        details_frame.pack(fill="x", pady=(8, 0))
+
+        row1 = tk.Frame(details_frame, bg=BG_FRAME)
+        row1.pack(fill="x", pady=(0, 8))
+        tk.Label(row1, text="Saldo inizio mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(
+            row1,
+            text=self._format_money_it(start_of_month_value) if projection_available else "N/D",
+            font=FONT_TABLE,
+            bg=BG_FRAME,
+            fg=FG_SOMMA,
+        ).pack(side="right")
+
+        row2 = tk.Frame(details_frame, bg=BG_FRAME)
+        row2.pack(fill="x", pady=(0, 8))
+        tk.Label(row2, text="Guadagno del mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(row2, text=self._format_money_it(projected_gain_used), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        row3 = tk.Frame(details_frame, bg=BG_FRAME)
+        row3.pack(fill="x", pady=(0, 8))
+        tk.Label(row3, text="Saldo fine mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(
+            row3,
+            text=self._format_money_it(end_of_month_value) if projection_available else "N/D",
+            font=("Segoe UI", 11, "bold"),
+            bg=BG_FRAME,
+            fg=FG_SOMMA,
+        ).pack(side="right")
+
+        row4 = tk.Frame(details_frame, bg=BG_FRAME)
+        row4.pack(fill="x", pady=(0, 8))
+        tk.Label(row4, text="Valore mostrato nella cella:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(row4, text=self._format_money_it(monthly_gain), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
+
+        tk.Label(details_frame, text="", bg=BG_FRAME).pack(fill="x", pady=4)
+
+        info_frame = tk.Frame(content, bg=BG_FRAME)
+        info_frame.pack(fill="both", expand=True, pady=(12, 0))
+
+        tk.Label(info_frame, text="Informazioni", font=FONT_TAB, bg=BG_FRAME, fg=FG_HEADER).pack(anchor="w", pady=(0, 8))
+
+        source_text = {
+            "actual": "Dati storici registrati",
+            "actual+forecast": "Parte storica + parte previsionale",
+            "addition": "Importo aggiunto una tantum",
+            "forecast": "Valore previsionale",
+        }.get(source, "Valore previsionale")
+
+        note_text = (
+            "Dettaglio del mese selezionato:\n"
+            f"- Origine dato: {source_text}\n"
+            f"- Guadagno del mese: {self._format_money_it(projected_gain_used)}\n"
+            "- Saldo calcolato partendo dalla cifra attuale Bondora\n"
+            "  e sommando i previsionali dei mesi successivi\n"
+            "- Gli incrementi seguono Bondora Evolution\n\n"
             "Il saldo fine mese rappresenta la stima puntuale\n"
             "per la chiusura del mese selezionato."
         )
