@@ -3471,7 +3471,6 @@ class App(tk.Tk):
             self.pbca_window.deiconify()
             self.pbca_window.lift()
             self.pbca_window.focus_force()
-            self._render_pbca_table()
             return
 
         self.pbca_window = tk.Toplevel(self)
@@ -3482,7 +3481,6 @@ class App(tk.Tk):
         self.pbca_window.protocol("WM_DELETE_WINDOW", self._close_pbca_window)
 
         self._build_pbca_window(self.pbca_window)
-        self._render_pbca_table()
 
     def _close_pbca_window(self):
         if self.pbca_window is not None and self.pbca_window.winfo_exists():
