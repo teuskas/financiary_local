@@ -5,6 +5,7 @@ App desktop con 3 tab per visualizzare le tabelle del foglio 2026.
 
 import math
 import os
+import re
 import sys
 import threading
 import tkinter as tk
@@ -694,6 +695,36 @@ class App(tk.Tk):
             else:
                 normalized = text.replace(",", "")
             return float(normalized)
+        except ValueError:
+            return None
+
+    def _parse_user_date(self, raw: str) -> date | None:
+        """Parsa date utente in modo tollerante e restituisce un oggetto date valido."""
+        text = str(raw or "").strip()
+        if not text:
+            return None
+
+        # Normalizza separatori comuni: 01-07-2026 / 01.07.2026 / 01 / 07 / 2026
+        normalized = re.sub(r"\s+", "", text)
+        normalized = normalized.replace("-", "/").replace(".", "/")
+
+        parts = normalized.split("/")
+        if len(parts) != 3:
+            return None
+
+        try:
+            day = int(parts[0])
+            month = int(parts[1])
+            year = int(parts[2])
+        except ValueError:
+            return None
+
+        # Supporta anche anno a 2 cifre (es. 26 -> 2026)
+        if 0 <= year <= 99:
+            year += 2000
+
+        try:
+            return date(year, month, day)
         except ValueError:
             return None
 
@@ -3596,12 +3627,8 @@ class App(tk.Tk):
 
         try:
             current_date_str = self.pbca_selected_date_var.get().strip()
-            if "/" in current_date_str:
-                parts = current_date_str.split("/")
-                current_date = date(int(parts[2]), int(parts[1]), int(parts[0]))
-            else:
-                current_date = date.today()
-        except (ValueError, IndexError):
+            current_date = self._parse_user_date(current_date_str) or date.today()
+        except Exception:
             current_date = date.today()
 
         year_var = tk.StringVar(value=str(current_date.year))
@@ -3850,20 +3877,18 @@ class App(tk.Tk):
             child.destroy()
 
         # Parse date and amount
-        try:
-            date_str = self.pbca_selected_date_var.get().strip()
-            if not date_str:
-                self.pbca_hint_var.set("Errore: inserisci una data nel formato DD/MM/YYYY")
-                return
-            if "/" in date_str:
-                parts = date_str.split("/")
-                selected_date = date(int(parts[2]), int(parts[1]), int(parts[0]))
-            else:
-                self.pbca_hint_var.set("Errore: data non valida. Formato: DD/MM/YYYY")
-                return
-        except (ValueError, IndexError):
+        date_str = self.pbca_selected_date_var.get().strip()
+        if not date_str:
+            self.pbca_hint_var.set("Errore: inserisci una data nel formato DD/MM/YYYY")
+            return
+
+        selected_date = self._parse_user_date(date_str)
+        if selected_date is None:
             self.pbca_hint_var.set("Errore: data non valida. Formato: DD/MM/YYYY")
             return
+
+        # Normalizza sempre il campo dopo parse valido
+        self.pbca_selected_date_var.set(selected_date.strftime("%d/%m/%Y"))
 
         try:
             amount_str = self.pbca_amount_var.get().strip()
