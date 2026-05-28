@@ -710,7 +710,11 @@ class App(tk.Tk):
 
         parts = normalized.split("/")
         if len(parts) != 3:
-            return None
+            # Fallback ultra-tollerante: estrae 3 blocchi numerici da stringhe miste.
+            matches = re.findall(r"\d+", normalized)
+            if len(matches) != 3:
+                return None
+            parts = matches
 
         try:
             day = int(parts[0])
@@ -3615,6 +3619,17 @@ class App(tk.Tk):
         self.pbca_table_body.bind("<Configure>", _refresh_scrollregion)
         self.pbca_table_canvas.bind("<Configure>", _sync_width)
 
+        # Placeholder iniziale: la tabella si popola dopo click su "Calcola".
+        tk.Label(
+            self.pbca_table_body,
+            text="Inserisci data e importo, poi premi 'Calcola' per generare il previsionale.",
+            bg=BG_TABLE,
+            fg=FG,
+            font=FONT_TABLE,
+            anchor="w",
+            justify="left",
+        ).pack(anchor="w", padx=10, pady=10)
+
     def _open_date_picker_pbca(self, date_entry: tk.Entry):
         """Apre un semplice calendario per selezionare la data."""
         date_picker = tk.Toplevel(self)
@@ -3871,9 +3886,6 @@ class App(tk.Tk):
         if self.pbca_table_body is None or self.pbca_table_canvas is None:
             return
 
-        for child in self.pbca_table_body.winfo_children():
-            child.destroy()
-
         # Parse date and amount
         date_str = self.pbca_selected_date_var.get().strip()
         if not date_str:
@@ -3900,6 +3912,10 @@ class App(tk.Tk):
         except (ValueError, TypeError):
             self.pbca_hint_var.set("Errore: importo non valido.")
             return
+
+        # Pulisce la tabella solo dopo validazione input, per non lasciare la schermata vuota in caso di errore.
+        for child in self.pbca_table_body.winfo_children():
+            child.destroy()
 
         rows, month_details = self._calculate_bondora_monthly_forecast_rows_with_addition(
             selected_date=selected_date,
