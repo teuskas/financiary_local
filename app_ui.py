@@ -201,6 +201,15 @@ class App(tk.Tk):
         self.bmb_detail_window: tk.Toplevel | None = None
         self.bmb_monthly_data: dict[tuple[int, int], dict[str, object]] = {}
 
+        # Previsionale Bondora con aggiunta
+        self.pbca_window: tk.Toplevel | None = None
+        self.pbca_selected_date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
+        self.pbca_amount_var = tk.StringVar(value="0")
+        self.pbca_hint_var = tk.StringVar(value="Inserisci data e importo, poi premi Calcola.")
+        self.pbca_table_canvas: tk.Canvas | None = None
+        self.pbca_table_body: tk.Frame | None = None
+        self.pbca_monthly_data: dict[tuple[int, int], dict[str, object]] = {}
+
         # Interesse composto Bondora
         self.icb_window: tk.Toplevel | None = None
         self.icb_hint_var = tk.StringVar(value="")
