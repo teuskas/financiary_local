@@ -3058,6 +3058,24 @@ class App(tk.Tk):
             for year in range(start_year, end_year + 1)
             for month in range(1, 13)
         }
+        monthly_rate_changes: dict[tuple[int, int], list[dict[str, object]]] = {
+            (year, month): []
+            for year in range(start_year, end_year + 1)
+            for month in range(1, 13)
+        }
+
+        def _register_rate_change(change_day: date, old_rate: float, new_rate: float, target_capital: float | None = None):
+            if new_rate <= old_rate + 1e-9:
+                return
+            key = (change_day.year, change_day.month)
+            if key not in monthly_rate_changes:
+                return
+            monthly_rate_changes[key].append({
+                "date": change_day,
+                "old_daily_rate": old_rate,
+                "new_daily_rate": new_rate,
+                "target_capital": target_capital,
+            })
 
         milestones: list[tuple[float, float]] = []
         for daily, row in self.bondo_evo_data.items():
@@ -3707,34 +3725,45 @@ class App(tk.Tk):
         day_before_addition = selected_date - timedelta(days=1)
         if day_before_addition >= today:
             for day_ord in range((today + timedelta(days=1)).toordinal(), day_before_addition.toordinal() + 1):
-                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
-                    daily_rate = max(daily_rate, milestones[milestone_idx][1])
-                    milestone_idx += 1
-
                 current_day = date.fromordinal(day_ord)
+                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+                    prev_rate = daily_rate
+                    target_capital, milestone_rate = milestones[milestone_idx]
+                    daily_rate = max(daily_rate, milestone_rate)
+                    _register_rate_change(current_day, prev_rate, daily_rate, target_capital)
+                    milestone_idx += 1
                 simulated_amount += daily_rate
                 key = (current_day.year, current_day.month)
                 if key in monthly_projected:
                     monthly_projected[key] += daily_rate
 
         # FASE 2: Aggiunta importo e ricacolo del daily_rate
+        pre_addition_daily_rate = daily_rate
         simulated_amount += addition_amount
-        
-        # Ricacola i milestones da zero con il nuovo capitale
-        daily_rate = initial_daily_rate
+
+        # Ricacola il daily_rate partendo dal valore prima dell'aggiunta.
+        # Se l'aggiunta fa scattare nuovi obiettivi, registriamo il/i passaggi nel giorno selezionato.
+        daily_rate_after_addition = pre_addition_daily_rate
+        for target_capital, milestone_rate in milestones:
+            if simulated_amount + 1e-9 >= target_capital and milestone_rate > daily_rate_after_addition + 1e-9:
+                _register_rate_change(selected_date, daily_rate_after_addition, milestone_rate, target_capital)
+                daily_rate_after_addition = milestone_rate
+
+        daily_rate = daily_rate_after_addition
         milestone_idx = 0
         while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
-            daily_rate = max(daily_rate, milestones[milestone_idx][1])
             milestone_idx += 1
 
         # FASE 3: Simulazione dal giorno di aggiunta fino alla fine dell'orizzonte
         if selected_date <= end_date:
             for day_ord in range(selected_date.toordinal(), end_date.toordinal() + 1):
-                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
-                    daily_rate = max(daily_rate, milestones[milestone_idx][1])
-                    milestone_idx += 1
-
                 current_day = date.fromordinal(day_ord)
+                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+                    prev_rate = daily_rate
+                    target_capital, milestone_rate = milestones[milestone_idx]
+                    daily_rate = max(daily_rate, milestone_rate)
+                    _register_rate_change(current_day, prev_rate, daily_rate, target_capital)
+                    milestone_idx += 1
                 simulated_amount += daily_rate
                 key = (current_day.year, current_day.month)
                 if key in monthly_projected:
@@ -3805,6 +3834,7 @@ class App(tk.Tk):
                     "end_balance": month_end,  # Questo include sia guadagno che aggiunta
                     "projection_available": projection_available,
                     "source": source,
+                    "daily_rate_changes": monthly_rate_changes.get((year, month_idx), []),
                 }
 
             annual_total = sum(monthly_values.values())
@@ -4017,6 +4047,7 @@ class App(tk.Tk):
         projected_gain = float(monthly_info.get("projected_gain", 0.0) or 0.0)
         projected_gain_used = float(monthly_info.get("projected_gain_used", 0.0) or 0.0)
         addition_in_month = float(monthly_info.get("addition_in_month", 0.0) or 0.0)
+        daily_rate_changes = monthly_info.get("daily_rate_changes", [])
         projection_available = bool(monthly_info.get("projection_available", False))
         start_raw = monthly_info.get("start_balance", None)
         end_raw = monthly_info.get("end_balance", None)
@@ -4084,6 +4115,45 @@ class App(tk.Tk):
         tk.Label(row4, text="Guadagno mostrato nella cella:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
         tk.Label(row4, text=self._format_money_it(monthly_gain), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
 
+        if isinstance(daily_rate_changes, list) and daily_rate_changes:
+            tk.Label(details_frame, text="", bg=BG_FRAME).pack(fill="x", pady=2)
+            tk.Label(
+                details_frame,
+                text="Cambi obiettivo nel mese:",
+                font=FONT_TABLE,
+                bg=BG_FRAME,
+                fg=FG_HEADER,
+            ).pack(anchor="w", pady=(0, 6))
+
+            for change in daily_rate_changes:
+                change_date = change.get("date")
+                old_rate = float(change.get("old_daily_rate", 0.0) or 0.0)
+                new_rate = float(change.get("new_daily_rate", 0.0) or 0.0)
+                target_capital = change.get("target_capital")
+
+                if isinstance(change_date, date):
+                    change_date_text = change_date.strftime("%d/%m/%Y")
+                else:
+                    change_date_text = "Data stimata"
+
+                target_text = ""
+                if isinstance(target_capital, (int, float)):
+                    target_text = f" (target: {self._format_money_it(float(target_capital))})"
+
+                tk.Label(
+                    details_frame,
+                    text=(
+                        f"- {change_date_text}: "
+                        f"{self._format_money_it(old_rate)} / giorno -> "
+                        f"{self._format_money_it(new_rate)} / giorno"
+                        f"{target_text}"
+                    ),
+                    font=FONT_SMALL,
+                    bg=BG_FRAME,
+                    fg=FG,
+                    justify="left",
+                ).pack(anchor="w", pady=(0, 3))
+
         tk.Label(details_frame, text="", bg=BG_FRAME).pack(fill="x", pady=4)
 
         info_frame = tk.Frame(content, bg=BG_FRAME)
@@ -4094,7 +4164,7 @@ class App(tk.Tk):
         source_text = {
             "actual": "Dati storici registrati",
             "actual+forecast": "Parte storica + parte previsionale",
-            "addition": "Importo aggiunto una tantum",
+            "forecast+addition": "Previsionale con aggiunta una tantum",
             "forecast": "Valore previsionale",
         }.get(source, "Valore previsionale")
 
