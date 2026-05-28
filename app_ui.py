@@ -203,12 +203,13 @@ class App(tk.Tk):
 
         # Previsionale Bondora con aggiunta
         self.pbca_window: tk.Toplevel | None = None
-        self.pbca_selected_date_var = tk.StringVar(value=date.today().strftime("%d/%m/%Y"))
-        self.pbca_amount_var = tk.StringVar(value="0")
-        self.pbca_hint_var = tk.StringVar(value="Inserisci data e importo, poi premi Calcola.")
+        self.pbca_selected_date_var = tk.StringVar(value="")
+        self.pbca_amount_var = tk.StringVar(value="")
+        self.pbca_hint_var = tk.StringVar(value="Seleziona data e importo, quindi premi 'Calcola'.")
         self.pbca_table_canvas: tk.Canvas | None = None
         self.pbca_table_body: tk.Frame | None = None
         self.pbca_monthly_data: dict[tuple[int, int], dict[str, object]] = {}
+        self.pbca_detail_window: tk.Toplevel | None = None
 
         # Interesse composto Bondora
         self.icb_window: tk.Toplevel | None = None
@@ -3484,7 +3485,6 @@ class App(tk.Tk):
             font=FONT_TABLE,
         )
         date_entry.pack(side="left", padx=(8, 2))
-        date_entry.insert(0, date.today().strftime("%d/%m/%Y"))
 
         tk.Button(
             controls,
@@ -3656,12 +3656,9 @@ class App(tk.Tk):
     ) -> tuple[list[dict[str, object]], dict[tuple[int, int], dict[str, object]]]:
         """Calcola il previsionale mensile Bondora con un'aggiunta una tantum in una data specifica.
         
-        La logica è la stessa di Previsionale mensile Bondora, ma:
-        1. Simula da oggi fino alla data dell'aggiunta (con daily_rate attuale)
-        2. Aggiunge l'importo alla data specificata
-        3. RICACOLA il daily_rate basato sul nuovo capitale
-        4. Continua la simulazione dal giorno dopo con il nuovo daily_rate
-        
+        La logica è la stessa di Previsionale mensile Bondora, ma il saldo viene aumentato di addition_amount
+        nel mese della data selezionata.
+
         Args:
             selected_date: Data in cui è stata aggiunta la cifra
             addition_amount: Importo aggiunto
@@ -3789,21 +3786,23 @@ class App(tk.Tk):
                 month_end = None
                 if projection_available:
                     month_start = forecast_balance_cursor
-                    # Se c'è un'aggiunta in questo mese, il saldo include sia il nuovo guadagno che l'aggiunta
+                    # Il saldo fine mese include sia il guadagno che l'aggiunta (se presente)
                     month_end = month_start + projected_for_balance + addition_in_this_month
                     forecast_balance_cursor = month_end
 
-                monthly_values[month_name] = value + addition_in_this_month
+                # La cella mostra SOLO il guadagno mensile, non l'aggiunta
+                monthly_values[month_name] = value
                 month_details[(year, month_idx)] = {
                     "year": year,
                     "month_idx": month_idx,
                     "month_name": month_name,
-                    "gain": value + addition_in_this_month,
+                    "gain": value,  # Solo il guadagno effettivo del mese
                     "actual_gain": actual_value,
-                    "projected_gain": projected_value + addition_in_this_month,
-                    "projected_gain_used": projected_for_balance + addition_in_this_month,
+                    "projected_gain": projected_value,  # Solo il guadagno proiettato, non l'aggiunta
+                    "projected_gain_used": projected_for_balance,
+                    "addition_in_month": addition_in_this_month,  # Separato per informazione
                     "start_balance": month_start,
-                    "end_balance": month_end,
+                    "end_balance": month_end,  # Questo include sia guadagno che aggiunta
                     "projection_available": projection_available,
                     "source": source,
                 }
@@ -3823,17 +3822,24 @@ class App(tk.Tk):
         # Parse date and amount
         try:
             date_str = self.pbca_selected_date_var.get().strip()
+            if not date_str:
+                self.pbca_hint_var.set("Errore: inserisci una data nel formato DD/MM/YYYY")
+                return
             if "/" in date_str:
                 parts = date_str.split("/")
                 selected_date = date(int(parts[2]), int(parts[1]), int(parts[0]))
             else:
-                selected_date = date.today()
+                self.pbca_hint_var.set("Errore: data non valida. Formato: DD/MM/YYYY")
+                return
         except (ValueError, IndexError):
             self.pbca_hint_var.set("Errore: data non valida. Formato: DD/MM/YYYY")
             return
 
         try:
             amount_str = self.pbca_amount_var.get().strip()
+            if not amount_str:
+                self.pbca_hint_var.set("Errore: inserisci un importo positivo.")
+                return
             addition_amount = float(self._parse_localized_number(amount_str) or 0.0)
             if addition_amount <= 0:
                 self.pbca_hint_var.set("Errore: importo deve essere positivo.")
@@ -4010,6 +4016,7 @@ class App(tk.Tk):
         monthly_gain = float(monthly_info.get("gain", 0.0) or 0.0)
         projected_gain = float(monthly_info.get("projected_gain", 0.0) or 0.0)
         projected_gain_used = float(monthly_info.get("projected_gain_used", 0.0) or 0.0)
+        addition_in_month = float(monthly_info.get("addition_in_month", 0.0) or 0.0)
         projection_available = bool(monthly_info.get("projection_available", False))
         start_raw = monthly_info.get("start_balance", None)
         end_raw = monthly_info.get("end_balance", None)
@@ -4054,6 +4061,13 @@ class App(tk.Tk):
         tk.Label(row2, text="Guadagno del mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
         tk.Label(row2, text=self._format_money_it(projected_gain_used), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
 
+        # Se c'è un'aggiunta in questo mese, mostrala
+        if addition_in_month > 0.0:
+            row_addition = tk.Frame(details_frame, bg=BG_FRAME)
+            row_addition.pack(fill="x", pady=(0, 8))
+            tk.Label(row_addition, text="Aggiunta una tantum:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+            tk.Label(row_addition, text=self._format_money_it(addition_in_month), font=FONT_TABLE, bg=BG_FRAME, fg=FG_ACCENT).pack(side="right")
+
         row3 = tk.Frame(details_frame, bg=BG_FRAME)
         row3.pack(fill="x", pady=(0, 8))
         tk.Label(row3, text="Saldo fine mese:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
@@ -4067,7 +4081,7 @@ class App(tk.Tk):
 
         row4 = tk.Frame(details_frame, bg=BG_FRAME)
         row4.pack(fill="x", pady=(0, 8))
-        tk.Label(row4, text="Valore mostrato nella cella:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
+        tk.Label(row4, text="Guadagno mostrato nella cella:", font=FONT_TABLE, bg=BG_FRAME, fg=FG_HEADER).pack(side="left")
         tk.Label(row4, text=self._format_money_it(monthly_gain), font=FONT_TABLE, bg=BG_FRAME, fg=FG_SOMMA).pack(side="right")
 
         tk.Label(details_frame, text="", bg=BG_FRAME).pack(fill="x", pady=4)
