@@ -3656,8 +3656,11 @@ class App(tk.Tk):
     ) -> tuple[list[dict[str, object]], dict[tuple[int, int], dict[str, object]]]:
         """Calcola il previsionale mensile Bondora con un'aggiunta una tantum in una data specifica.
         
-        La logica è la stessa di Previsionale mensile Bondora, ma il saldo viene aumentato di addition_amount
-        nel mese della data selezionata.
+        La logica è la stessa di Previsionale mensile Bondora, ma:
+        1. Simula da oggi fino alla data dell'aggiunta (con daily_rate attuale)
+        2. Aggiunge l'importo alla data specificata
+        3. RICACOLA il daily_rate basato sul nuovo capitale
+        4. Continua la simulazione dal giorno dopo con il nuovo daily_rate
         
         Args:
             selected_date: Data in cui è stata aggiunta la cifra
@@ -3668,16 +3671,10 @@ class App(tk.Tk):
         start_year = today.year
         end_year = start_year + horizon_years
 
-        current_amount, daily_rate = self._get_bondora_current_snapshot()
+        current_amount, initial_daily_rate = self._get_bondora_current_snapshot()
         snapshot_amount = current_amount
-        simulated_amount = current_amount
 
-        monthly_projected: dict[tuple[int, int], float] = {
-            (year, month): 0.0
-            for year in range(start_year, end_year + 1)
-            for month in range(1, 13)
-        }
-
+        # Prepara i milestones (coppie capitale, daily_rate)
         milestones: list[tuple[float, float]] = []
         for daily, row in self.bondo_evo_data.items():
             cap_pr = row.get("cap_pr")
@@ -3691,36 +3688,75 @@ class App(tk.Tk):
             milestones.append((cap_pr_value, daily_value))
         milestones.sort(key=lambda item: item[0])
 
+        monthly_projected: dict[tuple[int, int], float] = {
+            (year, month): 0.0
+            for year in range(start_year, end_year + 1)
+            for month in range(1, 13)
+        }
+
+        end_date = date(end_year, 12, 31)
+        
+        # FASE 1: Simulazione fino al giorno PRIMA dell'aggiunta
+        simulated_amount = current_amount
+        daily_rate = initial_daily_rate
+        milestone_idx = 0
+        
+        # Aggiorna daily_rate iniziale basato sui milestones
+        while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+            daily_rate = max(daily_rate, milestones[milestone_idx][1])
+            milestone_idx += 1
+        
+        # Simula da domani fino al giorno prima della data di aggiunta
+        day_before_addition = selected_date - timedelta(days=1)
+        if day_before_addition >= today:
+            for day_ord in range((today + timedelta(days=1)).toordinal(), day_before_addition.toordinal() + 1):
+                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+                    daily_rate = max(daily_rate, milestones[milestone_idx][1])
+                    milestone_idx += 1
+
+                current_day = date.fromordinal(day_ord)
+                simulated_amount += daily_rate
+                key = (current_day.year, current_day.month)
+                if key in monthly_projected:
+                    monthly_projected[key] += daily_rate
+
+        # FASE 2: Aggiunta importo e ricacolo del daily_rate
+        simulated_amount += addition_amount
+        
+        # Ricacola i milestones da zero con il nuovo capitale
+        daily_rate = initial_daily_rate
         milestone_idx = 0
         while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
             daily_rate = max(daily_rate, milestones[milestone_idx][1])
             milestone_idx += 1
 
-        end_date = date(end_year, 12, 31)
-        for day_ord in range((today + timedelta(days=1)).toordinal(), end_date.toordinal() + 1):
-            while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
-                daily_rate = max(daily_rate, milestones[milestone_idx][1])
-                milestone_idx += 1
+        # FASE 3: Simulazione dal giorno di aggiunta fino alla fine dell'orizzonte
+        if selected_date <= end_date:
+            for day_ord in range(selected_date.toordinal(), end_date.toordinal() + 1):
+                while milestone_idx < len(milestones) and simulated_amount + 1e-9 >= milestones[milestone_idx][0]:
+                    daily_rate = max(daily_rate, milestones[milestone_idx][1])
+                    milestone_idx += 1
 
-            current_day = date.fromordinal(day_ord)
-            simulated_amount += daily_rate
-            key = (current_day.year, current_day.month)
-            if key in monthly_projected:
-                monthly_projected[key] += daily_rate
+                current_day = date.fromordinal(day_ord)
+                simulated_amount += daily_rate
+                key = (current_day.year, current_day.month)
+                if key in monthly_projected:
+                    monthly_projected[key] += daily_rate
 
         current_year_actual = self._get_ctm_bondora_monthly_values_for_year(str(start_year))
 
-        # Saldo di riferimento: cifra attuale Bondora
+        # Costruisci le righe della tabella
         forecast_balance_cursor = snapshot_amount
-
         rows: list[dict[str, object]] = []
         month_details: dict[tuple[int, int], dict[str, object]] = {}
+        
         for year in range(start_year, end_year + 1):
             monthly_values: dict[str, float] = {}
             for month_idx, month_name in enumerate(MESI, start=1):
                 projected_value = float(monthly_projected.get((year, month_idx), 0.0))
                 actual_value = 0.0
                 source = "forecast"
+                addition_in_this_month = 0.0
 
                 if year == start_year:
                     actual_value = float(current_year_actual.get(month_name, 0.0) or 0.0)
@@ -3735,38 +3771,37 @@ class App(tk.Tk):
                     else:
                         # Mesi futuri: proiezione
                         value = projected_value
+                        # Se l'aggiunta è in questo mese, nota il flag
+                        if selected_date.year == year and selected_date.month == month_idx:
+                            addition_in_this_month = addition_amount
+                            source = "forecast+addition"
                 else:
                     value = projected_value
-
-                # Determina se la proiezione è disponibile per il calcolo del saldo
-                projection_available = year > start_year or (year == start_year and month_idx >= today.month)
-                
-                # Per il calcolo del saldo
-                projected_for_balance = projected_value if projection_available else 0.0
-                
-                # Aggiungi l'importo se siamo nel mese della data selezionata e in futuro rispetto a oggi
-                addition_for_this_month = 0.0
-                if selected_date.year == year and selected_date.month == month_idx:
-                    if month_idx >= today.month or year > start_year:
-                        addition_for_this_month = addition_amount
+                    if selected_date.year == year and selected_date.month == month_idx:
+                        addition_in_this_month = addition_amount
                         source = "forecast+addition"
+
+                # Determina se la proiezione è disponibile
+                projection_available = year > start_year or (year == start_year and month_idx >= today.month)
+                projected_for_balance = projected_value if projection_available else 0.0
 
                 month_start = None
                 month_end = None
                 if projection_available:
                     month_start = forecast_balance_cursor
-                    month_end = month_start + projected_for_balance + addition_for_this_month
+                    # Se c'è un'aggiunta in questo mese, il saldo include sia il nuovo guadagno che l'aggiunta
+                    month_end = month_start + projected_for_balance + addition_in_this_month
                     forecast_balance_cursor = month_end
 
-                monthly_values[month_name] = value + addition_for_this_month
+                monthly_values[month_name] = value + addition_in_this_month
                 month_details[(year, month_idx)] = {
                     "year": year,
                     "month_idx": month_idx,
                     "month_name": month_name,
-                    "gain": value + addition_for_this_month,
+                    "gain": value + addition_in_this_month,
                     "actual_gain": actual_value,
-                    "projected_gain": projected_value + addition_for_this_month,
-                    "projected_gain_used": projected_for_balance + addition_for_this_month,
+                    "projected_gain": projected_value + addition_in_this_month,
+                    "projected_gain_used": projected_for_balance + addition_in_this_month,
                     "start_balance": month_start,
                     "end_balance": month_end,
                     "projection_available": projection_available,
