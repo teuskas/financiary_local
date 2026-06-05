@@ -218,6 +218,8 @@ class App(tk.Tk):
         self.icb_table_canvas: tk.Canvas | None = None
         self.icb_table_body: tk.Frame | None = None
         self.icb_yearly_data: dict[int, float] = {}
+        self.icb_chart_window: tk.Toplevel | None = None
+        self.icb_chart_canvas: tk.Canvas | None = None
 
         self.live_bm_value_var = tk.StringVar(value="EUR --")
         self.live_bmr_value_var = tk.StringVar(value="EUR --")
@@ -1452,6 +1454,8 @@ class App(tk.Tk):
             self._render_ctm_graph()
         if self.icb_window is not None and self.icb_window.winfo_exists():
             self._render_icb_table()
+        if self.icb_chart_window is not None and self.icb_chart_window.winfo_exists():
+            self._draw_icb_growth_curve()
         ts = datetime.now().strftime("%d/%m/%Y %H:%M")
         self.lbl_update.config(text=f"Aggiornato: {ts}")
 
@@ -2769,6 +2773,7 @@ class App(tk.Tk):
     def _close_icb_window(self):
         if self.icb_window is not None and self.icb_window.winfo_exists():
             self.icb_window.destroy()
+        self._close_icb_chart_window(refocus=False)
         self.icb_window = None
         self.icb_table_canvas = None
         self.icb_table_body = None
@@ -2788,6 +2793,18 @@ class App(tk.Tk):
             bg=BG_TABLE,
             fg=FG_HEADER,
         ).pack(side="left", anchor="w")
+
+        tk.Button(
+            header_row,
+            text="Grafico",
+            bg=BG_FRAME,
+            fg=FG,
+            activebackground=SEL_BG,
+            activeforeground=FG_HEADER,
+            relief="flat",
+            padx=10,
+            command=self._show_icb_chart_window,
+        ).pack(side="right", padx=(0, 8))
 
         tk.Button(
             header_row,
@@ -2837,6 +2854,177 @@ class App(tk.Tk):
 
         self.icb_table_body.bind("<Configure>", _refresh_scrollregion)
         self.icb_table_canvas.bind("<Configure>", _sync_width)
+
+    def _show_icb_chart_window(self):
+        if self.icb_chart_window is not None and self.icb_chart_window.winfo_exists():
+            self.icb_chart_window.deiconify()
+            self.icb_chart_window.lift()
+            self.icb_chart_window.focus_force()
+            self._draw_icb_growth_curve()
+            return
+
+        self.icb_chart_window = tk.Toplevel(self)
+        self.icb_chart_window.title("Own Finance - Grafico interesse composto Bondora")
+        self.icb_chart_window.geometry("980x560")
+        self.icb_chart_window.minsize(760, 420)
+        self.icb_chart_window.configure(bg=BG_TABLE)
+        self.icb_chart_window.protocol("WM_DELETE_WINDOW", self._close_icb_chart_window)
+
+        wrapper = tk.Frame(self.icb_chart_window, bg=BG_TABLE)
+        wrapper.pack(fill="both", expand=True, padx=16, pady=16)
+
+        tk.Label(
+            wrapper,
+            text="Curva crescita prospettata (Interesse composto Bondora)",
+            font=("Segoe UI", 12, "bold"),
+            bg=BG_TABLE,
+            fg=FG_HEADER,
+            anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        self.icb_chart_canvas = tk.Canvas(wrapper, bg=BG_TABLE, highlightthickness=0)
+        self.icb_chart_canvas.pack(fill="both", expand=True)
+        self.icb_chart_canvas.bind("<Configure>", lambda _e: self._draw_icb_growth_curve())
+
+        self._draw_icb_growth_curve()
+
+    def _close_icb_chart_window(self, refocus: bool = True):
+        if self.icb_chart_window is not None and self.icb_chart_window.winfo_exists():
+            self.icb_chart_window.destroy()
+        self.icb_chart_window = None
+        self.icb_chart_canvas = None
+        if refocus:
+            self._refocus_main()
+
+    def _draw_icb_growth_curve(self):
+        if self.icb_chart_canvas is None or not self.icb_chart_canvas.winfo_exists():
+            return
+
+        yearly_data = self.icb_yearly_data or self._calculate_bondora_compound_yearly_to_2050()
+        self.icb_yearly_data = yearly_data
+        canvas = self.icb_chart_canvas
+        canvas.delete("all")
+
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width < 120:
+            width = canvas.winfo_reqwidth()
+        if height < 120:
+            height = canvas.winfo_reqheight()
+
+        if not yearly_data:
+            canvas.create_text(
+                max(80, width // 2),
+                max(40, height // 2),
+                text="Dati Bondora non sufficienti per mostrare il grafico.",
+                fill=FG_ACCENT,
+                font=FONT_TABLE,
+            )
+            return
+
+        years = sorted(yearly_data.keys())
+        values = [float(yearly_data[year]) for year in years]
+
+        left_margin = 84
+        right_margin = 26
+        top_margin = 20
+        bottom_margin = 58
+        plot_w = max(1, width - left_margin - right_margin)
+        plot_h = max(1, height - top_margin - bottom_margin)
+
+        y_min = min(values)
+        y_max = max(values)
+        if abs(y_max - y_min) < 1e-9:
+            y_max = y_min + 1.0
+        y_padding = (y_max - y_min) * 0.08
+        y_axis_min = max(0.0, y_min - y_padding)
+        y_axis_max = y_max + y_padding
+
+        first_year = years[0]
+        last_year = years[-1]
+
+        def _x_for_year(year_value: int) -> float:
+            if last_year == first_year:
+                return left_margin + (plot_w / 2.0)
+            ratio = (year_value - first_year) / float(last_year - first_year)
+            return left_margin + ratio * plot_w
+
+        def _y_for_value(value: float) -> float:
+            ratio = (value - y_axis_min) / float(y_axis_max - y_axis_min)
+            ratio = max(0.0, min(1.0, ratio))
+            return top_margin + (1.0 - ratio) * plot_h
+
+        # Assi
+        canvas.create_line(left_margin, top_margin, left_margin, top_margin + plot_h, fill=FG, width=1)
+        canvas.create_line(left_margin, top_margin + plot_h, left_margin + plot_w, top_margin + plot_h, fill=FG, width=1)
+
+        # Tick asse Y
+        y_ticks = 5
+        for i in range(y_ticks + 1):
+            ratio = i / y_ticks
+            tick_y = top_margin + plot_h - (ratio * plot_h)
+            value = y_axis_min + ratio * (y_axis_max - y_axis_min)
+            canvas.create_line(left_margin - 5, tick_y, left_margin, tick_y, fill=FG)
+            canvas.create_text(
+                left_margin - 10,
+                tick_y,
+                text=self._format_number_it(value, 0),
+                fill=FG,
+                font=FONT_SMALL,
+                anchor="e",
+            )
+
+        # Tick asse X
+        max_labels = 8
+        x_step = max(1, math.ceil(len(years) / max_labels))
+        for idx, year_value in enumerate(years):
+            if idx not in (0, len(years) - 1) and (idx % x_step) != 0:
+                continue
+            tick_x = _x_for_year(year_value)
+            canvas.create_line(tick_x, top_margin + plot_h, tick_x, top_margin + plot_h + 5, fill=FG)
+            canvas.create_text(
+                tick_x,
+                top_margin + plot_h + 18,
+                text=str(year_value),
+                fill=FG,
+                font=FONT_SMALL,
+                anchor="n",
+            )
+
+        points: list[float] = []
+        for year_value in years:
+            points.extend([_x_for_year(year_value), _y_for_value(float(yearly_data[year_value]))])
+
+        if len(points) >= 4:
+            canvas.create_line(*points, fill=FG_SOMMA, width=2, smooth=True)
+
+        first_x = _x_for_year(first_year)
+        first_y = _y_for_value(float(yearly_data[first_year]))
+        last_x = _x_for_year(last_year)
+        last_y = _y_for_value(float(yearly_data[last_year]))
+
+        canvas.create_oval(first_x - 3, first_y - 3, first_x + 3, first_y + 3, fill=FG_SOMMA, outline=FG_SOMMA)
+        canvas.create_oval(last_x - 3, last_y - 3, last_x + 3, last_y + 3, fill=FG_HEADER, outline=FG_HEADER)
+
+        canvas.create_text(
+            min(width - 8, first_x + 8),
+            max(8, first_y - 10),
+            text=f"{first_year}: {self._format_number_it(float(yearly_data[first_year]), 2)}",
+            fill=FG,
+            font=FONT_SMALL,
+            anchor="sw",
+        )
+        canvas.create_text(
+            min(width - 8, last_x + 8),
+            max(8, last_y - 10),
+            text=f"{last_year}: {self._format_number_it(float(yearly_data[last_year]), 2)}",
+            fill=FG_HEADER,
+            font=FONT_SMALL,
+            anchor="sw",
+        )
+
+        canvas.create_text(left_margin + (plot_w / 2), height - 14, text="Anni", fill=FG, font=FONT_SMALL)
+        canvas.create_text(20, top_margin + (plot_h / 2), text="Capitale", fill=FG, font=FONT_SMALL, angle=90)
 
     def _calculate_bondora_compound_yearly_to_2050(self) -> dict[int, float]:
         today = date.today()
@@ -2899,6 +3087,8 @@ class App(tk.Tk):
                 fg=FG_ACCENT,
                 font=FONT_TABLE,
             ).pack(anchor="w", padx=10, pady=10)
+            if self.icb_chart_window is not None and self.icb_chart_window.winfo_exists():
+                self._draw_icb_growth_curve()
             return
 
         start_amount, start_daily = self._get_bondora_current_snapshot()
@@ -2984,6 +3174,8 @@ class App(tk.Tk):
 
         self.icb_table_body.update_idletasks()
         self.icb_table_canvas.configure(scrollregion=self.icb_table_canvas.bbox("all"))
+        if self.icb_chart_window is not None and self.icb_chart_window.winfo_exists():
+            self._draw_icb_growth_curve()
 
     def _close_bmb_window(self):
         if self.bmb_window is not None and self.bmb_window.winfo_exists():
