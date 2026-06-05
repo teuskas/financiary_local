@@ -220,6 +220,8 @@ class App(tk.Tk):
         self.icb_yearly_data: dict[int, float] = {}
         self.icb_chart_window: tk.Toplevel | None = None
         self.icb_chart_canvas: tk.Canvas | None = None
+        self.icb_chart_tooltip: tk.Toplevel | None = None
+        self.icb_chart_tooltip_label: tk.Label | None = None
 
         self.live_bm_value_var = tk.StringVar(value="EUR --")
         self.live_bmr_value_var = tk.StringVar(value="EUR --")
@@ -2889,12 +2891,52 @@ class App(tk.Tk):
         self._draw_icb_growth_curve()
 
     def _close_icb_chart_window(self, refocus: bool = True):
+        self._hide_icb_point_tooltip()
         if self.icb_chart_window is not None and self.icb_chart_window.winfo_exists():
             self.icb_chart_window.destroy()
         self.icb_chart_window = None
         self.icb_chart_canvas = None
         if refocus:
             self._refocus_main()
+
+    def _show_icb_point_tooltip(self, event, text: str):
+        if self.icb_chart_window is None or not self.icb_chart_window.winfo_exists():
+            return
+        if self.icb_chart_tooltip is None or not self.icb_chart_tooltip.winfo_exists():
+            self.icb_chart_tooltip = tk.Toplevel(self.icb_chart_window)
+            self.icb_chart_tooltip.overrideredirect(True)
+            self.icb_chart_tooltip.attributes("-topmost", True)
+            self.icb_chart_tooltip_label = tk.Label(
+                self.icb_chart_tooltip,
+                text="",
+                bg=BG_FRAME,
+                fg=FG,
+                font=FONT_SMALL,
+                justify="left",
+                padx=8,
+                pady=6,
+                relief="solid",
+                bd=1,
+            )
+            self.icb_chart_tooltip_label.pack()
+
+        if self.icb_chart_tooltip_label is not None:
+            self.icb_chart_tooltip_label.config(text=text)
+
+        self._move_icb_point_tooltip(event)
+
+    def _move_icb_point_tooltip(self, event):
+        if self.icb_chart_tooltip is None or not self.icb_chart_tooltip.winfo_exists():
+            return
+        x = int(event.x_root) + 14
+        y = int(event.y_root) + 12
+        self.icb_chart_tooltip.geometry(f"+{x}+{y}")
+
+    def _hide_icb_point_tooltip(self):
+        if self.icb_chart_tooltip is not None and self.icb_chart_tooltip.winfo_exists():
+            self.icb_chart_tooltip.destroy()
+        self.icb_chart_tooltip = None
+        self.icb_chart_tooltip_label = None
 
     def _draw_icb_growth_curve(self):
         if self.icb_chart_canvas is None or not self.icb_chart_canvas.winfo_exists():
@@ -2903,6 +2945,7 @@ class App(tk.Tk):
         yearly_data = self.icb_yearly_data or self._calculate_bondora_compound_yearly_to_2050()
         self.icb_yearly_data = yearly_data
         canvas = self.icb_chart_canvas
+        self._hide_icb_point_tooltip()
         canvas.delete("all")
 
         width = canvas.winfo_width()
@@ -2998,13 +3041,38 @@ class App(tk.Tk):
         if len(points) >= 4:
             canvas.create_line(*points, fill=FG_SOMMA, width=2, smooth=True)
 
+        # Marker annuali con tooltip (anno + capitale)
+        for idx, year_value in enumerate(years):
+            point_x = _x_for_year(year_value)
+            point_y = _y_for_value(float(yearly_data[year_value]))
+            if idx == 0:
+                point_color = FG_SOMMA
+            elif idx == len(years) - 1:
+                point_color = FG_HEADER
+            else:
+                point_color = FG
+
+            point_id = canvas.create_oval(
+                point_x - 3,
+                point_y - 3,
+                point_x + 3,
+                point_y + 3,
+                fill=point_color,
+                outline=point_color,
+            )
+            tooltip_text = (
+                f"Anno: {year_value}\n"
+                f"Capitale: {self._format_money_it(float(yearly_data[year_value]))}"
+            )
+            canvas.tag_bind(point_id, "<Enter>", lambda event, t=tooltip_text: self._show_icb_point_tooltip(event, t))
+            canvas.tag_bind(point_id, "<Motion>", self._move_icb_point_tooltip)
+            canvas.tag_bind(point_id, "<Leave>", lambda _event: self._hide_icb_point_tooltip())
+
         first_x = _x_for_year(first_year)
         first_y = _y_for_value(float(yearly_data[first_year]))
         last_x = _x_for_year(last_year)
         last_y = _y_for_value(float(yearly_data[last_year]))
 
-        canvas.create_oval(first_x - 3, first_y - 3, first_x + 3, first_y + 3, fill=FG_SOMMA, outline=FG_SOMMA)
-        canvas.create_oval(last_x - 3, last_y - 3, last_x + 3, last_y + 3, fill=FG_HEADER, outline=FG_HEADER)
 
         canvas.create_text(
             min(width - 8, first_x + 8),
